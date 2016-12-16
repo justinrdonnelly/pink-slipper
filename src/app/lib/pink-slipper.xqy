@@ -40,8 +40,6 @@ declare function ps:run(
   let $thread-statuses := map:map()
   
   let $job-document-ids := ps:select-documents($selector-path, $selector-vars)
-  let $_ := xdmp:log("$job-document-ids:")
-  let $_ := $job-document-ids ! xdmp:log(.)
   
   let $document-count-index := ps:get-count-index($job-document-ids)
   let $params := fn:subsequence($job-document-ids, 1, $document-count-index - 1)
@@ -52,22 +50,17 @@ declare function ps:run(
     if (fn:starts-with($param, "PROCESS-MODULE."))
     then 
       let $key-value := fn:tokenize(fn:substring-after($param, "PROCESS-MODULE."), "=")
-      let $_ := xdmp:log("adding var: " || $key-value[1] || "=" || $key-value[2])
       return map:put($process-vars, $key-value[1], $key-value[2])
     else ()
     (: TODO: handle other possible additional corb parameters :)
   
   let $thread-count := fn:ceiling(fn:count($job-document-ids) div $chunk-size)
   (:let $threads := map:map() (: thread id to URIs :):)
-  let $_ := xdmp:log("thread count: " || xdmp:quote($thread-count))
   let $_ := for $thread in 1 to $thread-count
     let $thread-id := sem:uuid-string()
     let $_ := map:put($thread-statuses, $thread-id, $status-incomplete)
     let $start := ($thread - 1) * $chunk-size + 1
     let $thread-document-ids := fn:subsequence($job-document-ids, $start, $chunk-size)
-    (:let $_ := xdmp:log("thread document ids")
-    let $_ := xdmp:log($thread-document-ids):)
-    (:return map:put($threads, $thread-id, fn:subsequence($uris, $start, $chunk-size)):)
     
     let $_ := ps:create-thread-status-document($job-id, $thread-id, $status-incomplete, (), (), $thread-document-ids, (), ())
 
@@ -102,19 +95,13 @@ declare function ps:process-documents(
     
     let $thread-status-doc-uri := ps:get-thread-status-doc-uri($job-id, $thread-id)
     let $thread-status-doc := fn:doc($thread-status-doc-uri)
-    (:let $_ := xdmp:log("status doc uri")
-    let $_ := xdmp:log($thread-status-doc-uri):)
     let $document-ids := $thread-status-doc/ps:threadStatus/ps:documentStatus/ps:unprocessedDocuments/ps:documentId/fn:string()
-    (:let $_ := xdmp:log("document IDs (for this thread):")
-    let $_ := xdmp:log($document-ids):)
     let $_ := for $document-id in $document-ids
       (: invoke the users process module :)
       return try
       {
         let $local-process-vars := ps:add-uri-to-vars($process-vars, $document-id)
-        let $_ := xdmp:log("document ID: " || $document-id || " - URI: " || map:get($local-process-vars, "URI"))
         let $_ := xdmp:invoke($process-path, $local-process-vars)
-        let $_ := xdmp:log("finished invoke for doc: " || $document-id)
         return map:put($successful, $document-id, $document-id)
       }
       catch ($e)
