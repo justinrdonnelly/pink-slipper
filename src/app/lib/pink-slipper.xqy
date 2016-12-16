@@ -20,6 +20,7 @@ module namespace ps = "http://marklogic.com/pink-slipper";
 declare variable $default-chunk-size := 500;
 declare variable $trace-event-name := "pink-slipper";
 declare variable $collection := "http://marklogic.com/pink-slipper";
+declare variable $base-uri := "http://marklogic.com/pink-slipper/";
 declare variable $status-incomplete := "Incomplete";
 declare variable $status-successful := "Successful";
 declare variable $status-unsuccessful := "Unsuccessful";
@@ -93,7 +94,7 @@ declare function ps:process-documents(
     let $failed := map:map()
     let $successful := map:map()
     
-    let $thread-status-doc-uri := ps:get-thread-status-doc-uri($job-id, $thread-id)
+    let $thread-status-doc-uri := ps:get-thread-status-doc-uri($thread-id)
     let $thread-status-doc := fn:doc($thread-status-doc-uri)
     let $document-ids := $thread-status-doc/ps:threadStatus/ps:documentStatus/ps:unprocessedDocuments/ps:documentId/fn:string()
     let $_ := for $document-id in $document-ids
@@ -109,11 +110,10 @@ declare function ps:process-documents(
         xdmp:trace($trace-event-name, $e),
         map:put($failed, $document-id, $e)
       }
-    (: update status doc :)
+    (: update thread and job status docs :)
     let $thread-end-time := fn:current-dateTime()
     let $_ := xdmp:trace($trace-event-name, "about to re-create status doc from anonymous function")
     let $thread-status := if (map:count($failed) > 0) then $status-unsuccessful else $status-successful
-    (: TODO: update the job status doc :)
     let $_ := ps:create-thread-status-document($job-id, $thread-id, $thread-status, $thread-start-time, $thread-end-time, (), map:keys($successful), map:keys($failed))
     return ps:update-job-status-document-for-thread($job-id, $thread-id, $thread-status)
   }
@@ -167,7 +167,7 @@ declare function ps:create-thread-status-document(
   ) as empty-sequence()
 {
   let $_ := xdmp:trace($trace-event-name, "Entering ps:create-thread-status-document")
-  let $uri := ps:get-thread-status-doc-uri($job-id, $thread-id)
+  let $uri := ps:get-thread-status-doc-uri($thread-id)
   let $doc :=
     <ps:threadStatus>
       <ps:jobId>{$job-id}</ps:jobId>
@@ -228,15 +228,14 @@ declare function ps:get-job-status-doc-uri(
   $job-id as xs:string (: the UUID for the job :)
   ) as xs:string
 {
-  "/taskTracker/" || $job-id || ".xml"
+  $base-uri || $job-id || ".xml"
 };
 
 declare function ps:get-thread-status-doc-uri(
-  $job-id as xs:string, (: the UUID for the job :)
   $thread-id as xs:string (: the UUID for the thread :)
   ) as xs:string
 {
-  "/taskTracker/" || $job-id || "/" || $thread-id || ".xml"
+  $base-uri || $thread-id || ".xml"
 };
 
 (: ====== Status functions start here ====== :)
