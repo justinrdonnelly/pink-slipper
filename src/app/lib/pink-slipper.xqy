@@ -26,37 +26,91 @@ declare variable $status-successful := "Successful";
 declare variable $status-unsuccessful := "Unsuccessful";
 
 declare function ps:run(
-  $selector-path as xs:string, (: the path to the selector module :)
-  $selector-vars as map:map?, (: selector vars :)
-  $process-path as xs:string, (: the path to the process module :)
-  $process-vars as map:map?, (: process vars in addition to $URI :)
+  $corb-properties as map:map, (: corb properties (eg URIS-MODULE) :)
   $chunk-size as xs:int? (: number of documents to process with each thread :)
   ) as xs:string (: a UUID for the job :)
 {
   let $_ := xdmp:trace($trace-event-name, "Entering ps:run")
-  let $_ := if ($chunk-size = 0) then fn:error(xs:QName("INVALIDCHUNKSIZE"), "Chunk size cannot be 0") else ()
+  (: confirm required corb properties are present :)
+  let $selector-path := map:get($corb-properties, "URIS-MODULE")
+  let $process-path := map:get($corb-properties, "PROCESS-MODULE")
+  let $_ := if (fn:empty($selector-path) or fn:empty($process-path))
+  then fn:error(xs:QName("MISSINGREQUIREDCORBPROPERTIES"), "CORB properties URIS-MODULE and PROCESS-MODULE are required")
+  else ()
+  let $_ := if ($chunk-size le 0)
+  then fn:error(xs:QName("INVALIDCHUNKSIZE"), "Chunk size must be greater than 0")
+  else ()
+  
   let $chunk-size := ($chunk-size, $default-chunk-size)[1]
   let $job-id := sem:uuid-string()
   let $start-time := fn:current-dateTime()
   let $thread-statuses := map:map()
   
+  
+  (: corb properties :)
+  let $init-vars := map:map()
+  let $selector-vars := map:map()
+  let $pre-batch-vars := map:map()
+  let $process-vars := map:map()
+  let $post-batch-vars := map:map()
+  let $_ := for $param in map:keys($corb-properties)
+    return if (fn:starts-with($param, "INIT-MODULE."))
+    then map:put($init-vars, fn:substring-after($param, "INIT-MODULE."), map:get($corb-properties, $param))
+    else if (fn:starts-with($param, "URIS-MODULE."))
+    then map:put($selector-vars, fn:substring-after($param, "URIS-MODULE."), map:get($corb-properties, $param))
+    else if (fn:starts-with($param, "PRE-BATCH-MODULE."))
+    then map:put($pre-batch-vars, fn:substring-after($param, "PRE-BATCH-MODULE."), map:get($corb-properties, $param))
+    else if (fn:starts-with($param, "PROCESS-MODULE."))
+    then map:put($process-vars, fn:substring-after($param, "PROCESS-MODULE."), map:get($corb-properties, $param))
+    else if (fn:starts-with($param, "POST-BATCH-MODULE."))
+    then map:put($post-batch-vars, fn:substring-after($param, "POST-BATCH-MODULE."), map:get($corb-properties, $param))
+    else ()
+  
+  
+  (: run INIT-MODULE :)
+  let $init-module := map:get($corb-properties, "PRE-BATCH-MODULE")
+  let $_ := if (fn:exists($init-module))
+  then
+    (: TODO :)
+    fn:error(xs:QName("NOTIMPLEMENTED"), "This feature is not yet implemented")
+  else ()
+  
+  
+  (: run URIS-MODULE :)
   let $job-document-ids := ps:select-documents($selector-path, $selector-vars)
   
+  (: handle additional corb parameters from selector module (before count of URIs) :)
   let $document-count-index := ps:get-count-index($job-document-ids)
   let $params := fn:subsequence($job-document-ids, 1, $document-count-index - 1)
   let $job-document-ids := fn:subsequence($job-document-ids, $document-count-index + 1)
 
-  (: handle additional corb parameters :)
   let $_ := for $param in $params return
-    if (fn:starts-with($param, "PROCESS-MODULE."))
-    then 
+    if (fn:starts-with($param, "PRE-BATCH-MODULE."))
+    then
+      let $key-value := fn:tokenize(fn:substring-after($param, "PRE-BATCH-MODULE."), "=")
+      return map:put($pre-batch-vars, $key-value[1], $key-value[2])
+    else if (fn:starts-with($param, "PROCESS-MODULE."))
+    then
       let $key-value := fn:tokenize(fn:substring-after($param, "PROCESS-MODULE."), "=")
       return map:put($process-vars, $key-value[1], $key-value[2])
-    else ()
-    (: TODO: handle other possible additional corb parameters :)
+    else if (fn:starts-with($param, "POST-BATCH-MODULE."))
+    then
+      let $key-value := fn:tokenize(fn:substring-after($param, "POST-BATCH-MODULE."), "=")
+      return map:put($post-batch-vars, $key-value[1], $key-value[2])
+    else fn:error(xs:QName("INVALIDCUSTOMINPUT"), $param || " is not a valid custom input for CORB")
   
+  
+  (: run PRE-BATCH-MODULE :)
+  let $pre-batch-module := map:get($corb-properties, "PRE-BATCH-MODULE")
+  let $_ := if (fn:exists($pre-batch-module))
+  then
+    (: TODO :)
+    fn:error(xs:QName("NOTIMPLEMENTED"), "This feature is not yet implemented")
+  else ()
+  
+  
+  (: run PROCESS-MODULE :)
   let $thread-count := fn:ceiling(fn:count($job-document-ids) div $chunk-size)
-  (:let $threads := map:map() (: thread id to URIs :):)
   let $_ := for $thread in 1 to $thread-count
     let $thread-id := sem:uuid-string()
     let $_ := map:put($thread-statuses, $thread-id, $status-incomplete)
@@ -64,10 +118,19 @@ declare function ps:run(
     let $thread-document-ids := fn:subsequence($job-document-ids, $start, $chunk-size)
     
     let $_ := ps:create-thread-status-document($job-id, $thread-id, $status-incomplete, (), (), $thread-document-ids, (), ())
-
     return ps:process-documents($process-path, $process-vars, $job-id, $thread-id)
 
   let $_ := ps:create-job-status-document($job-id, $start-time, $chunk-size, $thread-statuses)
+  
+  
+  (: run POST-BATCH-MODULE :)
+  let $post-batch-module := map:get($corb-properties, "POST-BATCH-MODULE")
+  let $_ := if (fn:exists($post-batch-module))
+  then
+    (: TODO... how would I even go about this - maybe have when the job status doc is marked complete, run post-batch :)
+    fn:error(xs:QName("NOTIMPLEMENTED"), "This feature is not yet implemented")
+  else ()
+  
   return $job-id
 };
 
@@ -154,7 +217,7 @@ declare function ps:create-job-status-document(
   return xdmp:document-insert($uri, $doc, xdmp:default-permissions(), $collection)
 };
 
-(: This function inserts the thread status documents :)
+(: This function inserts the thread status document :)
 declare function ps:create-thread-status-document(
   $job-id as xs:string, (: the UUID for the job :)
   $thread-id as xs:string, (: the UUID for the thread :)
@@ -259,7 +322,7 @@ declare function ps:get-job-status(
 (: return the status of each thread within a job :)
 declare function ps:get-thread-statuses(
   $job-id as xs:string (: the UUID for the job :)
-  ) as element()*
+  ) as element()* (: thread status elements :)
 {
   let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
   let $job-status-doc := fn:doc($job-status-doc-uri)
