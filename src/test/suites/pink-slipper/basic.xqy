@@ -34,10 +34,19 @@ let $job-id := xdmp:eval(
   declare namespace tu="http://marklogic.com/pink-slipper/test-util";
   declare variable $tu:client-module-base-path as xs:string external;
   declare variable $tu:process-vars as map:map external;
-  let $corb-properties := map:map()
-  let $_ := map:put($corb-properties, "URIS-MODULE", $tu:client-module-base-path || "/selector.xqy")
-  let $_ := map:put($corb-properties, "PROCESS-MODULE", $tu:client-module-base-path || "/process.xqy")
-  return ps:run($corb-properties, 1)
+  ps:run(
+    map:map(
+      <map:map xmlns:map="http://marklogic.com/xdmp/map" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+        <map:entry key="URIS-MODULE">
+          <map:value xsi:type="xs:string">{$tu:client-module-base-path || "/selector.xqy"}</map:value>
+       </map:entry>
+        <map:entry key="PROCESS-MODULE">
+          <map:value xsi:type="xs:string">{$tu:client-module-base-path || "/process.xqy"}</map:value>
+        </map:entry>
+      </map:map>
+    ),
+    1
+  )
   ',
   (
     xs:QName("tu:client-module-base-path"), $client-module-base-path,
