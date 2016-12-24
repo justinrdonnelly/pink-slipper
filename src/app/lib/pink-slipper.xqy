@@ -68,7 +68,7 @@ declare function ps:run(
   
   
   (: run INIT-MODULE :)
-  let $init-module := map:get($corb-properties, "PRE-BATCH-MODULE")
+  let $init-module := map:get($corb-properties, "INIT-MODULE")
   let $_ := if (fn:exists($init-module))
   then
     (: TODO :)
