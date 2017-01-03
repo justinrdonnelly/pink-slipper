@@ -26,6 +26,13 @@ declare variable $status-successful := "Successful";
 declare variable $status-unsuccessful := "Unsuccessful";
 
 declare function ps:run(
+  $corb-properties as map:map (: corb properties (eg URIS-MODULE) :)
+  ) as xs:string (: a UUID for the job :)
+{
+  ps:run($corb-properties, ())
+};
+
+declare function ps:run(
   $corb-properties as map:map, (: corb properties (eg URIS-MODULE) :)
   $chunk-size as xs:int? (: number of documents to process with each thread :)
   ) as xs:string (: a UUID for the job :)
