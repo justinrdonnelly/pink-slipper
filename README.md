@@ -36,6 +36,6 @@ let $job-status := ps:get-job-status($job-id)
 let $_ :=
   if ($job-status = $ps:status-incomplete) then "keep waiting"
   else if ($job-status = $ps:status-unsuccessful) then "uh-oh, better look into this"
-  else if ($job-status = $ps:status-successful) then "woo-hoo!""
+  else if ($job-status = $ps:status-successful) then "woo-hoo!"
   else () (: this should never happen :)
 ```
