@@ -1,6 +1,6 @@
 #Pink Slipper
 
-Pink Slipper is a MarkLogic tool execute CoRB code enitrely within MarkLogic.  No command line.  No Java.  Simply kick your job off and wait.  Job status tracking allows you to check if your job is complete.  Pink Slipper gives you all the familiarty of CoRB with the piece of mind provided through job status.
+Pink Slipper is a MarkLogic tool execute [CoRB](https://github.com/marklogic/corb2) code enitrely within MarkLogic.  No command line.  No Java.  Simply kick your job off and wait.  Job status tracking allows you to check if your job is complete.  Pink Slipper gives you all the familiarty of CoRB with the piece of mind provided through job status.
 
 The main goals of Pink Slipper are:
 
