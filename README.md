@@ -12,9 +12,10 @@ How to use Pink Slipper:
 
 1. Copy src/app/lib/pink-slipper.xqy into your project
 2. Write your CoRB modules
-3. Import Pink Slipper in your module
-4. Call ps:run()
-5. Check job status as needed with ps:get-job-status()
+3. Import Pink Slipper into your module
+4. Create a map containing your CoRB properties (eg URIS-MODULE)
+5. Call ps:run()
+6. Check job status as needed with ps:get-job-status()
 
 Code example to start job:
 ```XQuery
