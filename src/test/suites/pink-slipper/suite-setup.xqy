@@ -16,4 +16,10 @@ let $_ := for $count in (1 to 10)
   let $count := fn:format-number($count, "00") (: pad to 2 digits :)
   return test:load-test-file($test-name || "/" || $count || ".xml", xdmp:database(), "/testing/" || $test-name || "/" || $count || ".xml")
 
+(: process-module-custom-inputs :)
+let $test-name := "javascript"
+let $_ := for $count in (1 to 10)
+  let $count := fn:format-number($count, "00") (: pad to 2 digits :)
+  return test:load-test-file($test-name || "/" || $count || ".xml", xdmp:database(), "/testing/" || $test-name || "/" || $count || ".xml")
+
 return ()
