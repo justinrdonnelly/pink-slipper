@@ -39,9 +39,9 @@ declare function ps:run(
 {
   let $_ := xdmp:trace($trace-event-name, "Entering ps:run")
   (: confirm required corb properties are present :)
-  let $selector-path := map:get($corb-properties, "URIS-MODULE")
-  let $process-path := map:get($corb-properties, "PROCESS-MODULE")
-  let $_ := if (fn:empty($selector-path) or fn:empty($process-path))
+  let $selector-module-path := map:get($corb-properties, "URIS-MODULE")
+  let $process-module-path := map:get($corb-properties, "PROCESS-MODULE")
+  let $_ := if (fn:empty($selector-module-path) or fn:empty($process-module-path))
   then fn:error(xs:QName("MISSINGREQUIREDCORBPROPERTIES"), "CORB properties URIS-MODULE and PROCESS-MODULE are required")
   else ()
   let $_ := if ($chunk-size le 0)
@@ -75,16 +75,17 @@ declare function ps:run(
   
   
   (: run INIT-MODULE :)
-  let $init-module := map:get($corb-properties, "INIT-MODULE")
-  let $_ := if (fn:exists($init-module))
+  let $init-module-path := map:get($corb-properties, "INIT-MODULE")
+  let $_ := if (fn:exists($init-module-path))
   then
-    (: TODO :)
-    fn:error(xs:QName("NOTIMPLEMENTED"), "This feature is not yet implemented")
+    (: execute in a different transaction so results of INIT-MODULE are visisble :)
+    ps:invoke-in-different-transaction($init-module-path, $init-vars)
   else ()
   
   
   (: run URIS-MODULE :)
-  let $job-document-ids := ps:select-documents($selector-path, $selector-vars)
+  (: execute in a different transaction so results of INIT-MODULE are visisble :)
+  let $job-document-ids := ps:invoke-in-different-transaction($selector-module-path, $selector-vars)
   
   (: handle additional corb parameters from selector module (before count of URIs) :)
   let $document-count-index := ps:get-count-index($job-document-ids)
@@ -125,7 +126,7 @@ declare function ps:run(
     let $thread-document-ids := fn:subsequence($job-document-ids, $start, $chunk-size)
     
     let $_ := ps:create-thread-status-document($job-id, $thread-id, $status-incomplete, (), (), $thread-document-ids, (), ())
-    return ps:process-documents($process-path, $process-vars, $job-id, $thread-id)
+    return ps:process-documents($process-module-path, $process-vars, $job-id, $thread-id)
 
   let $_ := ps:create-job-status-document($job-id, $start-time, $chunk-size, $thread-statuses)
   
@@ -141,16 +142,22 @@ declare function ps:run(
   return $job-id
 };
 
-declare function ps:select-documents(
-  $selector-path as xs:string, (: the path to the selector module :)
-  $selector-vars as map:map? (: selector vars :)
+declare function ps:invoke-in-different-transaction(
+  $module-path as xs:string, (: the path to the selector module :)
+  $module-vars as map:map? (: selector vars :)
   ) as item()* (: a sequence beginning with the count of documents, then the document IDs (often a URI) :)
 {
-  xdmp:invoke($selector-path, $selector-vars)
+  xdmp:invoke(
+    $module-path,
+    $module-vars,
+    <options xmlns="xdmp:eval">
+      <isolation>different-transaction</isolation>
+    </options>
+    )
 };
 
 declare function ps:process-documents(
-  $process-path as xs:string, (: the path to the process module :)
+  $process-module-path as xs:string, (: the path to the process module :)
   $process-vars as map:map?, (: process vars in addition to $URI :)
   $job-id as xs:string, (: the UUID for the job :)
   $thread-id as xs:string (: the UUID for this thread :)
@@ -172,7 +179,7 @@ declare function ps:process-documents(
       return try
       {
         let $local-process-vars := ps:add-uri-to-vars($process-vars, $document-id)
-        let $_ := xdmp:invoke($process-path, $local-process-vars)
+        let $_ := xdmp:invoke($process-module-path, $local-process-vars)
         return map:put($successful, $document-id, $document-id)
       }
       catch ($e)
@@ -308,7 +315,7 @@ declare function ps:get-thread-status-doc-uri(
   $base-uri || $thread-id || ".xml"
 };
 
-(: ====== Status functions start here ====== :)
+(: ====== Status retrieval functions start here ====== :)
 
 (: return the overall status of a job :)
 declare function ps:get-job-status(
