@@ -1,11 +1,11 @@
-(: 
- 
+(:
+
 Copyright 2016 MarkLogic Corporation
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 http://www.apache.org/licenses/LICENSE-2.0
- 
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,13 +16,13 @@ limitations under the License.
 
 xquery version "1.0-ml";
 
-(: this is a test for executing an init module :)
+(: this is a test for executing a pre-batch module :)
 
 import module namespace test="http://marklogic.com/roxy/test-helper" at "/test/test-helper.xqy";
 import module namespace tu="http://marklogic.com/pink-slipper/test-util" at "/test/suites/pink-slipper/lib/test-util.xqy";
 import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
 
-declare variable $test-name := "init-module";
+declare variable $test-name := "pre-batch-module";
 declare variable $client-module-base-path := "/test/suites/pink-slipper/lib/" || $test-name;
 
 let $process-vars := map:map()
@@ -37,17 +37,17 @@ let $job-id := xdmp:eval(
   ps:run(
     map:map(
       <map:map xmlns:map="http://marklogic.com/xdmp/map" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema">
-        <map:entry key="INIT-MODULE">
-          <map:value xsi:type="xs:string">{$tu:client-module-base-path || "/init-module.xqy"}</map:value>
-        </map:entry>
-        <map:entry key="INIT-MODULE.new-val">
-          <map:value xsi:type="xs:string">dynamicValue</map:value>
-        </map:entry>
         <map:entry key="URIS-MODULE">
           <map:value xsi:type="xs:string">{$tu:client-module-base-path || "/selector.xqy"}</map:value>
         </map:entry>
         <map:entry key="PROCESS-MODULE">
           <map:value xsi:type="xs:string">{$tu:client-module-base-path || "/process.xqy"}</map:value>
+        </map:entry>
+        <map:entry key="PRE-BATCH-MODULE">
+          <map:value xsi:type="xs:string">{$tu:client-module-base-path || "/pre-batch-module.xqy"}</map:value>
+        </map:entry>
+        <map:entry key="PRE-BATCH-MODULE.new-val">
+          <map:value xsi:type="xs:string">dynamicValue</map:value>
         </map:entry>
       </map:map>
     ),

@@ -112,8 +112,8 @@ declare function ps:run(
   let $pre-batch-module := map:get($corb-properties, "PRE-BATCH-MODULE")
   let $_ := if (fn:exists($pre-batch-module))
   then
-    (: TODO :)
-    fn:error(xs:QName("NOTIMPLEMENTED"), "This feature is not yet implemented")
+    (: execute in a different transaction so results of INIT-MODULE are visisble :)
+    ps:invoke-in-different-transaction($pre-batch-module, $pre-batch-vars)
   else ()
   
   
@@ -143,8 +143,8 @@ declare function ps:run(
 };
 
 declare function ps:invoke-in-different-transaction(
-  $module-path as xs:string, (: the path to the selector module :)
-  $module-vars as map:map? (: selector vars :)
+  $module-path as xs:string, (: the path to the module :)
+  $module-vars as map:map? (: module vars :)
   ) as item()* (: a sequence beginning with the count of documents, then the document IDs (often a URI) :)
 {
   xdmp:invoke(

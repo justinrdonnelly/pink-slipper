@@ -39,7 +39,7 @@ let $job-id := xdmp:eval(
       <map:map xmlns:map="http://marklogic.com/xdmp/map" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema">
         <map:entry key="URIS-MODULE">
           <map:value xsi:type="xs:string">{$tu:client-module-base-path || "/selector.xqy"}</map:value>
-       </map:entry>
+        </map:entry>
         <map:entry key="PROCESS-MODULE">
           <map:value xsi:type="xs:string">{$tu:client-module-base-path || "/process.xqy"}</map:value>
         </map:entry>
