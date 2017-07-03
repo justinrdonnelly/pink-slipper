@@ -90,7 +90,7 @@ return (
   for $count in (1 to 10)
     let $count := fn:format-number($count, "00") (: pad to 2 digits :)
     return test:assert-equal("Updated", tu:doc("/testing/" || $test-name || "/" || $count || ".xml")/root/val/fn:string()),
-  let $post-batch-doc := fn:doc($post-batch-uri)
+  let $post-batch-doc := tu:doc($post-batch-uri)
   return (
     test:assert-exists($post-batch-doc),
     test:assert-equal("Post Batch Mod", $post-batch-doc/postBatch/fn:string())
