@@ -48,6 +48,27 @@ declare function tu:get-thread-statuses(
   )
 };
 
+(: return the post-batch status from the pink-slipper module (abstract away the hassle of doing things in another transaction) :)
+declare function tu:get-post-batch-status(
+  $job-id as xs:string (: the job ID :)
+) as xs:string (: post-batch status :)
+{
+ xdmp:eval(
+  '
+    xquery version "1.0-ml";
+    import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
+    declare variable $ps:job-id as xs:string external;
+    ps:get-post-batch-status($ps:job-id)
+  ',
+  (
+    xs:QName("ps:job-id"), $job-id
+  ),
+  <options xmlns="xdmp:eval">
+    <isolation>different-transaction</isolation>
+  </options>
+  )
+};
+
 (: return the document (abstract away the hassle of doing things in another transaction) :)
 declare function tu:doc(
   $uri as xs:string*

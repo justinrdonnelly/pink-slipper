@@ -128,16 +128,29 @@ declare function ps:run(
     let $_ := ps:create-thread-status-document($job-id, $thread-id, $status-incomplete, (), (), $thread-document-ids, (), ())
     return ps:process-documents($process-module-path, $process-vars, $job-id, $thread-id)
 
-  let $_ := ps:create-job-status-document($job-id, $start-time, $chunk-size, $thread-statuses)
   
-  
-  (: run POST-BATCH-MODULE :)
+  (: set up POST-BATCH-MODULE :)
   let $post-batch-module := map:get($corb-properties, "POST-BATCH-MODULE")
-  let $_ := if (fn:exists($post-batch-module))
+  let $post-batch-element := if (fn:exists($post-batch-module))
   then
-    (: TODO... how would I even go about this - maybe have when the job status doc is marked complete, run post-batch :)
-    fn:error(xs:QName("NOTIMPLEMENTED"), "This feature is not yet implemented")
-  else ()
+    <ps:postBatchModule>
+      <ps:path>{$post-batch-module}</ps:path>
+      <ps:status>{$status-incomplete}</ps:status>
+      <ps:variables>
+        {
+          for $var in map:keys($post-batch-vars)
+          return (
+          <ps:variable>
+            <ps:name>{$var}</ps:name>
+            <ps:value>{map:get($post-batch-vars, $var)}</ps:value>
+          </ps:variable>
+         )
+        }
+      </ps:variables>
+    </ps:postBatchModule>
+  else <ps:postBatchModule/>
+  
+  let $_ := ps:create-job-status-document($job-id, $start-time, $chunk-size, $thread-statuses, $post-batch-element)
   
   return $job-id
 };
@@ -206,7 +219,8 @@ declare function ps:create-job-status-document(
   $job-id as xs:string, (: the UUID for the job :)
   $start-time as xs:dateTime, (: the start date/time of the job :)
   $chunk-size as xs:int, (: number of documents to process with each thread :)
-  $thread-statuses as map:map (: a map of thread IDs to status ("Incomplete", "Successful", or "Unsuccessful") :)
+  $thread-statuses as map:map, (: a map of thread IDs to status ("Incomplete", "Successful", or "Unsuccessful") :)
+  $post-batch-element as element(ps:postBatchModule) (: element containing post batch modules URI and variables :)
   ) as empty-sequence()
 {
   let $_ := xdmp:trace($trace-event-name, "Entering ps:create-job-status-document")
@@ -216,6 +230,7 @@ declare function ps:create-job-status-document(
       <ps:jobId>{$job-id}</ps:jobId>
       <ps:startTime>{$start-time}</ps:startTime>
       <ps:chunkSize>{$chunk-size}</ps:chunkSize>
+      {$post-batch-element}
       <ps:threads>
         {
         for $thread-id in map:keys($thread-statuses) return
@@ -286,11 +301,44 @@ declare function ps:update-job-status-document-for-thread(
   $thread-status as xs:string (: the status for this thread :)
   ) as empty-sequence()
 {
+  (: TODO: would a lock-for-update make this safer? :)
   let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
   let $job-status-doc := fn:doc($job-status-doc-uri)
-  let $old := $job-status-doc/ps:jobStatus/ps:threads/ps:thread[ps:threadId = $thread-id]/ps:threadStatus
-  let $new := <ps:threadStatus>{$thread-status}</ps:threadStatus>
-  return xdmp:node-replace($old, $new)
+  let $threads-complete := ps:are-threads-complete($job-id, $thread-id)
+  return (
+    xdmp:node-replace(
+      $job-status-doc/ps:jobStatus/ps:threads/ps:thread[ps:threadId = $thread-id]/ps:threadStatus,
+      <ps:threadStatus>{$thread-status}</ps:threadStatus>
+    ),
+    if ($threads-complete) then (
+      xdmp:trace($trace-event-name, "Completed main job, checking for post-batch module"),
+      ps:execute-post-batch-module($job-id)
+    ) else ()
+  )
+};
+
+declare function ps:execute-post-batch-module(
+  $job-id as xs:string (: the UUID for the job :)
+) as empty-sequence()
+{
+  let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
+  let $job-status-doc := fn:doc($job-status-doc-uri)
+  let $module-path := $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:path/fn:string()
+  let $variables := map:new((
+    for $var in $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:variables/ps:variable
+      return map:entry($var/ps:name/fn:string(), $var/ps:value/fn:string())
+  ))
+  return try
+  {
+    xdmp:invoke($module-path, $variables),
+    xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-successful}</ps:status>)
+  }
+  catch ($e)
+  {
+    (xdmp:log($e),
+    (: TODO: add error info to status document :)
+    xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-unsuccessful}</ps:status>))
+  }
 };
 
 (: return the index in the sequence of the first item of type xs:integer :)
@@ -325,12 +373,31 @@ declare function ps:get-job-status(
   let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
   let $job-status-doc := fn:doc($job-status-doc-uri)
   let $_ := if (fn:empty($job-status-doc)) then fn:error(xs:QName("INVALIDJOBID"), "Job ID does not exist") else ()
+  let $post-batch-status := $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status/fn:string()
   let $thread-statuses := $job-status-doc/ps:jobStatus/ps:threads/ps:thread/ps:threadStatus/fn:string()
-  let $job-status :=
-    if ($thread-statuses = $status-incomplete) then $status-incomplete
-    else if ($thread-statuses = $status-unsuccessful) then $status-unsuccessful
+  return if (some $status in ($thread-statuses, $post-batch-status) satisfies $status = $status-incomplete) then $status-incomplete
+    else if (some $status in ($thread-statuses, $post-batch-status) satisfies $status = $status-unsuccessful) then $status-unsuccessful
     else $status-successful
-  return $job-status
+};
+
+(: return fn:true() if this job is complete :)
+declare function ps:are-threads-complete(
+  $job-id as xs:string (: the UUID for the job :)
+  ) as xs:boolean
+{
+  let $job-status := ps:get-job-status($job-id)
+  return $job-status = $status-successful or $job-status = $status-unsuccessful
+};
+
+(: return fn:true() if this all threads in job except the one with the ID passed are complete :)
+declare function ps:are-threads-complete(
+  $job-id as xs:string, (: the UUID for the job :)
+  $except-thread-id as xs:string (: the UUID for the thread to exclude :)
+  ) as xs:boolean
+{
+  every $thread-status
+    in fn:doc(ps:get-job-status-doc-uri($job-id))/ps:jobStatus/ps:threads/ps:thread[ps:threadId/fn:string() != $except-thread-id]/ps:threadStatus/fn:string()
+    satisfies $thread-status = $status-successful or $thread-status = $status-unsuccessful
 };
 
 (: return the status of each thread within a job :)
@@ -342,6 +409,16 @@ declare function ps:get-thread-statuses(
   let $job-status-doc := fn:doc($job-status-doc-uri)
   let $threads := $job-status-doc/ps:jobStatus/ps:threads/ps:thread
   return $threads
+};
+
+(: return the status of the post-batch-module :)
+declare function ps:get-post-batch-status(
+  $job-id as xs:string (: the UUID for the job :)
+  ) as xs:string (: post-batch status :)
+{
+  let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
+  let $job-status-doc := fn:doc($job-status-doc-uri)
+  return $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status/fn:string()
 };
 
 (:
