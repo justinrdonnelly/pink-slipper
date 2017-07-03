@@ -14,12 +14,22 @@ limitations under the License.
 
 :)
 
+(: this is a test for executing a pre-batch module :)
 xquery version "1.0-ml";
 
-(: this is a test for executing a pre-batch module :)
+import module namespace test = "http://marklogic.com/roxy/test-helper" at "/test/test-helper.xqy";
 
-import module namespace test="http://marklogic.com/roxy/test-helper" at "/test/test-helper.xqy";
-import module namespace tu="http://marklogic.com/pink-slipper/test-util" at "/test/suites/pink-slipper/lib/test-util.xqy";
+declare variable $test-name := "pre-batch-module";
+
+for $count in (1 to 10)
+  let $count := fn:format-number($count, "00") (: pad to 2 digits :)
+  return test:load-test-file($test-name || "/" || $count || ".xml", xdmp:database(), "/testing/" || $test-name || "/" || $count || ".xml")
+;
+
+xquery version "1.0-ml";
+
+import module namespace test = "http://marklogic.com/roxy/test-helper" at "/test/test-helper.xqy";
+import module namespace tu = "http://marklogic.com/pink-slipper/test-util" at "/test/suites/pink-slipper/lib/test-util.xqy";
 import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
 
 declare variable $test-name := "pre-batch-module";
