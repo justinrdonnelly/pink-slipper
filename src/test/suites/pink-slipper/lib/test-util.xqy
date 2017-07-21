@@ -48,6 +48,27 @@ declare function tu:get-thread-statuses(
   )
 };
 
+(: return the thread status documents from the pink-slipper module (abstract away the hassle of doing things in another transaction) :)
+declare function tu:get-thread-status-docs-for-job(
+  $job-id as xs:string (: the job ID :)
+) as document-node()* (: thread status documents :)
+{
+ xdmp:eval(
+  '
+    xquery version "1.0-ml";
+    import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
+    declare variable $ps:job-id as xs:string external;
+    ps:get-thread-status-docs-for-job($ps:job-id)
+  ',
+  (
+    xs:QName("ps:job-id"), $job-id
+  ),
+  <options xmlns="xdmp:eval">
+    <isolation>different-transaction</isolation>
+  </options>
+  )
+};
+
 (: return the post-batch status from the pink-slipper module (abstract away the hassle of doing things in another transaction) :)
 declare function tu:get-post-batch-status(
   $job-id as xs:string (: the job ID :)

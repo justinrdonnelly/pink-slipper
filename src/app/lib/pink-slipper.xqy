@@ -125,7 +125,7 @@ declare function ps:run(
     let $start := ($thread - 1) * $chunk-size + 1
     let $thread-document-ids := fn:subsequence($job-document-ids, $start, $chunk-size)
     
-    let $_ := ps:create-thread-status-document($job-id, $thread-id, $status-incomplete, (), (), $thread-document-ids, (), ())
+    let $_ := ps:create-thread-status-document($job-id, $thread-id, $status-incomplete, (), (), $thread-document-ids, (), map:map())
     return ps:process-documents($process-module-path, $process-vars, $job-id, $thread-id)
 
   
@@ -184,8 +184,7 @@ declare function ps:process-documents(
     let $failed := map:map()
     let $successful := map:map()
     
-    let $thread-status-doc-uri := ps:get-thread-status-doc-uri($thread-id)
-    let $thread-status-doc := fn:doc($thread-status-doc-uri)
+    let $thread-status-doc := ps:get-thread-status-doc($thread-id)
     let $document-ids := $thread-status-doc/ps:threadStatus/ps:documentStatus/ps:unprocessedDocuments/ps:documentId/fn:string()
     let $_ := for $document-id in $document-ids
       (: invoke the users process module :)
@@ -204,7 +203,7 @@ declare function ps:process-documents(
     let $thread-end-time := fn:current-dateTime()
     let $_ := xdmp:trace($trace-event-name, "about to re-create status doc from anonymous function")
     let $thread-status := if (map:count($failed) > 0) then $status-unsuccessful else $status-successful
-    let $_ := ps:create-thread-status-document($job-id, $thread-id, $thread-status, $thread-start-time, $thread-end-time, (), map:keys($successful), map:keys($failed))
+    let $_ := ps:create-thread-status-document($job-id, $thread-id, $thread-status, $thread-start-time, $thread-end-time, (), map:keys($successful), $failed)
     return ps:update-job-status-document-for-thread($job-id, $thread-id, $thread-status)
   }
   let $options :=
@@ -255,7 +254,7 @@ declare function ps:create-thread-status-document(
   $end-time as xs:dateTime?, (: the end time for the thread :)
   $unprocessed-document-ids as xs:string*, (: document IDs (often a URI) of documents to be processed :)
   $successful-document-ids as xs:string*, (: document IDs (often a URI) of documents that were processed successfully :)
-  $unsuccessful-document-ids as xs:string* (: document IDs (often a URI) of documents that were processed unsuccessfully :)
+  $unsuccessful-document-ids as map:map (: map of document IDs (often a URI) of documents that were processed unsuccessfully to errors :)
   ) as empty-sequence()
 {
   let $_ := xdmp:trace($trace-event-name, "Entering ps:create-thread-status-document")
@@ -275,13 +274,17 @@ declare function ps:create-thread-status-document(
           {for $document-id in $successful-document-ids return <ps:documentId>{$document-id}</ps:documentId>}
         </ps:successfulDocuments>
         <ps:unsuccessfulDocuments>
-          {for $document-id in $unsuccessful-document-ids return <ps:documentId>{$document-id}</ps:documentId>}
+          {for $document-id in map:keys($unsuccessful-document-ids) return
+            <ps:error documentId="{$document-id}">{map:get($unsuccessful-document-ids, $document-id)}</ps:error>
+          }
         </ps:unsuccessfulDocuments>
       </ps:documentStatus>
     </ps:threadStatus>
 
-  let $_ := xdmp:trace($trace-event-name, "Exiting ps:create-thread-status-document")
-  return xdmp:document-insert($uri, $doc, xdmp:default-permissions(), $collection)
+  return (
+    xdmp:document-insert($uri, $doc, xdmp:default-permissions(), $collection),
+    xdmp:trace($trace-event-name, "Exiting ps:create-thread-status-document")
+  )
 };
 
 declare function ps:add-uri-to-vars(
@@ -302,8 +305,7 @@ declare function ps:update-job-status-document-for-thread(
   ) as empty-sequence()
 {
   (: TODO: would a lock-for-update make this safer? :)
-  let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
-  let $job-status-doc := fn:doc($job-status-doc-uri)
+  let $job-status-doc := ps:get-job-status-doc($job-id)
   let $threads-complete := ps:are-threads-complete($job-id, $thread-id)
   return (
     xdmp:node-replace(
@@ -321,8 +323,7 @@ declare function ps:execute-post-batch-module(
   $job-id as xs:string (: the UUID for the job :)
 ) as empty-sequence()
 {
-  let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
-  let $job-status-doc := fn:doc($job-status-doc-uri)
+  let $job-status-doc := ps:get-job-status-doc($job-id)
   let $module-path := $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:path/fn:string()
   let $variables := map:new((
     for $var in $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:variables/ps:variable
@@ -335,9 +336,10 @@ declare function ps:execute-post-batch-module(
   }
   catch ($e)
   {
-    (xdmp:log($e),
+    xdmp:trace($trace-event-name, $e),
     (: TODO: add error info to status document :)
-    xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-unsuccessful}</ps:status>))
+    xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-unsuccessful}</ps:status>)
+    (:xdmp:node-insert-after($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:error>{$e}</ps:error>):)
   }
 };
 
@@ -356,22 +358,50 @@ declare function ps:get-job-status-doc-uri(
   $base-uri || $job-id || ".xml"
 };
 
+(: return the job status document :)
+declare function ps:get-job-status-doc(
+  $job-id as xs:string (: the UUID for the job :)
+) as document-node()
+{
+  fn:doc(
+    ps:get-job-status-doc-uri($job-id)
+  )
+};
+
 declare function ps:get-thread-status-doc-uri(
   $thread-id as xs:string (: the UUID for the thread :)
-  ) as xs:string
+  ) as xs:string (: URI for the thread status document :)
 {
   $base-uri || $thread-id || ".xml"
 };
 
+declare function ps:get-thread-status-doc(
+  $thread-id as xs:string (: the UUID for the thread :)
+  ) as document-node()* (: thread status document for the thread ID :)
+{
+  fn:doc(
+    ps:get-thread-status-doc-uri($thread-id)
+  )
+};
+
+declare function ps:get-thread-status-docs-for-job(
+  $job-id as xs:string (: the UUID for the job :)
+  ) as document-node()* (: thread status document(s) for the job :)
+{
+  for $thread-id in ps:get-job-status-doc($job-id)/ps:jobStatus/ps:threads/ps:thread/ps:threadId/fn:string()
+    return ps:get-thread-status-doc($thread-id)
+};
+
+
 (: ====== Status retrieval functions start here ====== :)
+
 
 (: return the overall status of a job :)
 declare function ps:get-job-status(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string
+  ) as xs:string (: job status :)
 {
-  let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
-  let $job-status-doc := fn:doc($job-status-doc-uri)
+  let $job-status-doc := ps:get-job-status-doc($job-id)
   let $_ := if (fn:empty($job-status-doc)) then fn:error(xs:QName("INVALIDJOBID"), "Job ID does not exist") else ()
   let $post-batch-status := $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status/fn:string()
   let $thread-statuses := $job-status-doc/ps:jobStatus/ps:threads/ps:thread/ps:threadStatus/fn:string()
@@ -383,20 +413,21 @@ declare function ps:get-job-status(
 (: return fn:true() if this job is complete :)
 declare function ps:are-threads-complete(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:boolean
+  ) as xs:boolean (: whether all threads for this job are complete :)
 {
   let $job-status := ps:get-job-status($job-id)
   return $job-status = $status-successful or $job-status = $status-unsuccessful
 };
 
 (: return fn:true() if this all threads in job except the one with the ID passed are complete :)
+(: TODO: make the above call this with no thread IDs? :)
 declare function ps:are-threads-complete(
   $job-id as xs:string, (: the UUID for the job :)
   $except-thread-id as xs:string (: the UUID for the thread to exclude :)
-  ) as xs:boolean
+  ) as xs:boolean (: whether all threads for this job except those excluded are complete :)
 {
   every $thread-status
-    in fn:doc(ps:get-job-status-doc-uri($job-id))/ps:jobStatus/ps:threads/ps:thread[ps:threadId/fn:string() != $except-thread-id]/ps:threadStatus/fn:string()
+    in ps:get-job-status-doc($job-id)/ps:jobStatus/ps:threads/ps:thread[ps:threadId/fn:string() != $except-thread-id]/ps:threadStatus/fn:string()
     satisfies $thread-status = $status-successful or $thread-status = $status-unsuccessful
 };
 
@@ -405,8 +436,7 @@ declare function ps:get-thread-statuses(
   $job-id as xs:string (: the UUID for the job :)
   ) as element()* (: thread status elements :)
 {
-  let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
-  let $job-status-doc := fn:doc($job-status-doc-uri)
+  let $job-status-doc := ps:get-job-status-doc($job-id)
   let $threads := $job-status-doc/ps:jobStatus/ps:threads/ps:thread
   return $threads
 };
@@ -416,8 +446,7 @@ declare function ps:get-post-batch-status(
   $job-id as xs:string (: the UUID for the job :)
   ) as xs:string (: post-batch status :)
 {
-  let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
-  let $job-status-doc := fn:doc($job-status-doc-uri)
+  let $job-status-doc := ps:get-job-status-doc($job-id)
   return $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status/fn:string()
 };
 
@@ -426,7 +455,6 @@ declare function ps:get-status-for-all-documents(
   $job-id as xs:string (: the UUID for the job :)
   ) as element()*
 {
-  let $job-status-doc-uri := ps:get-job-status-doc-uri($job-id)
-  let $job-status-doc := fn:doc($job-status-doc-uri)
+  let $job-status-doc := ps:get-job-status-doc($job-id)
 };
 :)
