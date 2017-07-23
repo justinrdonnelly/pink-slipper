@@ -1,5 +1,7 @@
 xquery version "1.0-ml";
 
+declare option xdmp:mapping "false";
+
 declare variable $doc-value as xs:string external;
 declare variable $uri as xs:string := "/post-batch-module-test.xml";
 

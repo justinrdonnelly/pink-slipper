@@ -4,6 +4,8 @@ module namespace tu="http://marklogic.com/pink-slipper/test-util";
 import module namespace test="http://marklogic.com/roxy/test-helper" at "/test/test-helper.xqy";
 import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
 
+declare option xdmp:mapping "false";
+
 declare variable $default-wait-time := 1;
 
 (: return the job status from the pink-slipper module (abstract away the hassle of doing things in another transaction) :)

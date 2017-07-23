@@ -19,6 +19,8 @@ xquery version "1.0-ml";
 
 import module namespace test = "http://marklogic.com/roxy/test-helper" at "/test/test-helper.xqy";
 
+declare option xdmp:mapping "false";
+
 declare variable $test-name := "exception";
 
 for $count in (1 to 10)
@@ -31,6 +33,8 @@ xquery version "1.0-ml";
 import module namespace test = "http://marklogic.com/roxy/test-helper" at "/test/test-helper.xqy";
 import module namespace tu = "http://marklogic.com/pink-slipper/test-util" at "/test/suites/pink-slipper/lib/test-util.xqy";
 import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
+
+declare option xdmp:mapping "false";
 
 declare variable $test-name := "exception";
 declare variable $client-module-base-path := "/test/suites/pink-slipper/lib/" || $test-name;

@@ -1,4 +1,7 @@
 xquery version "1.0-ml";
+
+declare option xdmp:mapping "false";
+
 declare variable $URI as xs:string external;
 declare variable $new-value-doc-uri as xs:string := "/init-module-test-new-value.xml";
 
