@@ -1,0 +1,25 @@
+<ps:threadStatus xmlns:ps="http://marklogic.com/pink-slipper">
+  <ps:jobId>f44ba6c8-01bb-4831-bf8c-7609b3f13bad</ps:jobId>
+  <ps:threadId>02b415c5-9f6a-4e90-8ef5-743d606ea001</ps:threadId>
+  <ps:threadStatus>Incomplete</ps:threadStatus>
+  <ps:startTime>2017-07-23T13:01:15.391303-07:00</ps:startTime>
+  <ps:endTime>2017-07-23T13:01:15.391303-07:00</ps:endTime>
+  <ps:documentStatus>
+    <ps:unprocessedDocuments>
+      <ps:documentId>/testing/incomplete/081.xml</ps:documentId>
+      <ps:documentId>/testing/incomplete/082.xml</ps:documentId>
+      <ps:documentId>/testing/incomplete/083.xml</ps:documentId>
+      <ps:documentId>/testing/incomplete/084.xml</ps:documentId>
+      <ps:documentId>/testing/incomplete/085.xml</ps:documentId>
+      <ps:documentId>/testing/incomplete/086.xml</ps:documentId>
+      <ps:documentId>/testing/incomplete/087.xml</ps:documentId>
+      <ps:documentId>/testing/incomplete/088.xml</ps:documentId>
+      <ps:documentId>/testing/incomplete/089.xml</ps:documentId>
+      <ps:documentId>/testing/incomplete/090.xml</ps:documentId>
+    </ps:unprocessedDocuments>
+    <ps:successfulDocuments>
+    </ps:successfulDocuments>
+    <ps:unsuccessfulDocuments>
+    </ps:unsuccessfulDocuments>
+  </ps:documentStatus>
+</ps:threadStatus>

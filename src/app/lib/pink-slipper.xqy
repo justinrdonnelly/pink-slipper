@@ -406,6 +406,41 @@ declare function ps:get-thread-status-docs-for-job(
 (: ====== Status retrieval functions start here ====== :)
 
 
+(: get the total number of documents to be processed for this job :)
+declare function ps:get-processed-document-count(
+  $job-id as xs:string (: the UUID for the job :)
+) as xs:nonNegativeInteger (: the number of documents processed :)
+{
+  (: number of complete thread status docs * number of documents per thread :)
+  xdmp:estimate(
+    cts:search(
+      /ps:threadStatus, (: according to my testing, this correctly excludes job status documents, even unfiltered :)
+      cts:and-query((
+        cts:element-value-query(xs:QName("ps:jobId"), $job-id),
+        cts:element-value-query(xs:QName("ps:threadStatus"), ($status-successful, $status-unsuccessful))
+      ))
+    )
+  )
+  *
+  ps:get-job-status-doc($job-id)/ps:jobStatus/ps:chunkSize/xs:int(.)
+};
+
+(: get the number of documents (not necessarily successfully) processed for this job :)
+declare function ps:get-total-document-count(
+  $job-id as xs:string (: the UUID for the job :)
+) as xs:nonNegativeInteger (: the number of documents processed :)
+{
+  (: number of thread status docs * number of documents per thread :)
+  xdmp:estimate(
+    cts:search(
+      /ps:threadStatus, (: according to my testing, this correctly excludes job status documents, even unfiltered :)
+      cts:element-value-query(xs:QName("ps:jobId"), $job-id)
+    )
+  )
+  *
+  ps:get-job-status-doc($job-id)/ps:jobStatus/ps:chunkSize/xs:int(.)
+};
+
 (: return the overall status of a job :)
 declare function ps:get-job-status(
   $job-id as xs:string (: the UUID for the job :)
@@ -413,9 +448,11 @@ declare function ps:get-job-status(
 {
   let $job-status-doc := ps:get-job-status-doc($job-id)
   let $_ := if (fn:empty($job-status-doc)) then fn:error(xs:QName("INVALIDJOBID"), "Job ID does not exist") else ()
+  (: TODO: do we need to check pre-batch status? :)
   let $post-batch-status := $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status/fn:string()
   let $thread-statuses := $job-status-doc/ps:jobStatus/ps:threads/ps:thread/ps:threadStatus/fn:string()
-  return if (some $status in ($thread-statuses, $post-batch-status) satisfies $status = $status-incomplete) then $status-incomplete
+  return if (some $status in ($thread-statuses, $post-batch-status) satisfies $status = $status-incomplete) then
+    $status-incomplete || " - " || ps:get-processed-document-count($job-id) || "/" || ps:get-total-document-count($job-id)
     else if (some $status in ($thread-statuses, $post-batch-status) satisfies $status = $status-unsuccessful) then $status-unsuccessful
     else $status-successful
 };
