@@ -17,6 +17,8 @@ limitations under the License.
 xquery version "1.0-ml";
 module namespace ps = "http://marklogic.com/pink-slipper";
 
+declare option xdmp:mapping "false";
+
 declare variable $default-chunk-size := 500;
 declare variable $trace-event-name := "pink-slipper";
 declare variable $collection := "http://marklogic.com/pink-slipper";
@@ -313,34 +315,42 @@ declare function ps:update-job-status-document-for-thread(
       <ps:threadStatus>{$thread-status}</ps:threadStatus>
     ),
     if ($threads-complete) then (
-      xdmp:trace($trace-event-name, "Completed main job, checking for post-batch module"),
+      xdmp:trace($trace-event-name, "Completed main job"),
       ps:execute-post-batch-module($job-id)
     ) else ()
   )
 };
 
+(: execute post-batch module (only if applicable) :)
 declare function ps:execute-post-batch-module(
   $job-id as xs:string (: the UUID for the job :)
 ) as empty-sequence()
 {
+  let $_ := xdmp:trace($trace-event-name, "Checking for post-batch module")
   let $job-status-doc := ps:get-job-status-doc($job-id)
   let $module-path := $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:path/fn:string()
-  let $variables := map:new((
-    for $var in $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:variables/ps:variable
-      return map:entry($var/ps:name/fn:string(), $var/ps:value/fn:string())
-  ))
-  return try
-  {
-    xdmp:invoke($module-path, $variables),
-    xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-successful}</ps:status>)
-  }
-  catch ($e)
-  {
-    xdmp:trace($trace-event-name, $e),
-    (: TODO: add error info to status document :)
-    xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-unsuccessful}</ps:status>)
-    (:xdmp:node-insert-after($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:error>{$e}</ps:error>):)
-  }
+  (: return if there is no post-batch module :)
+  return if (fn:empty($module-path)) then
+    xdmp:trace($trace-event-name, "No post-batch module")
+  else
+    let $_ := xdmp:trace($trace-event-name, "Executing post-batch module at " || $module-path)
+    let $variables := map:new((
+      for $var in $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:variables/ps:variable
+        return map:entry($var/ps:name/fn:string(), $var/ps:value/fn:string())
+    ))
+    let $_ := try
+    {
+      xdmp:invoke($module-path, $variables),
+      xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-successful}</ps:status>)
+    }
+    catch ($e)
+    {
+      xdmp:trace($trace-event-name, $e),
+      (: TODO: add error info to status document :)
+      xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-unsuccessful}</ps:status>)
+      (:xdmp:node-insert-after($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:error>{$e}</ps:error>):)
+    }
+    return xdmp:trace($trace-event-name, "post-batch module complete")
 };
 
 (: return the index in the sequence of the first item of type xs:integer :)
