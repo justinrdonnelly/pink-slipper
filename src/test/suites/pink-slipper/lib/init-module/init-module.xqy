@@ -2,8 +2,7 @@ xquery version "1.0-ml";
 
 declare option xdmp:mapping "false";
 
-declare variable $new-val as xs:string external;
+declare variable $init-mod-new-uri as xs:string external;
+declare variable $init-mod-new-val as xs:string external;
 
-declare variable $uri as xs:string := "/init-module-test-new-value.xml";
-
-xdmp:document-insert($uri, <val>{$new-val}</val>, xdmp:default-permissions())
+xdmp:document-insert($init-mod-new-uri, <val>{$init-mod-new-val}</val>, xdmp:default-permissions())

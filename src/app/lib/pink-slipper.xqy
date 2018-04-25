@@ -19,75 +19,271 @@ module namespace ps = "http://marklogic.com/pink-slipper";
 
 declare option xdmp:mapping "false";
 
-declare variable $default-chunk-size := 500;
+declare variable $invoke-options :=
+  <options xmlns="xdmp:eval">
+    <isolation>same-statement</isolation>
+  </options>;
+
+
+declare variable $update-options :=
+  <options xmlns="xdmp:eval">
+    <transaction-mode>update-auto-commit</transaction-mode>
+  </options>;
+
+declare variable $chunk-size := 5000;
 declare variable $trace-event-name := "pink-slipper";
-declare variable $collection := "http://marklogic.com/pink-slipper";
 declare variable $base-uri := "http://marklogic.com/pink-slipper/";
-declare variable $status-incomplete := "Incomplete";
-declare variable $status-successful := "Successful";
-declare variable $status-unsuccessful := "Unsuccessful";
+
+(: job status :)
+declare variable $job-status-processing := "Processing";
+declare variable $job-status-successful := "Successful"; (: all the modules (including all the documents in the URIs module) have processed successfully :)
+declare variable $job-status-complete-with-errors := "Complete with errors"; (: at least 1 module completed with an error (FAIL-ON-ERROR is false) :)
+declare variable $job-status-unsuccessful := "Unsuccessful"; (: at least 1 module failed processing and the job stopped (FAIL-ON-ERROR is true) :)
+
+(: module status :)
+declare variable $module-status-pending := "Pending";
+declare variable $module-status-processing := "Processing"; (: only applicable to PROCESS module :)
+declare variable $module-status-successful := "Successful"; (: the module (including all the documents if the PROCESS module) has processed successfully :)
+declare variable $module-status-complete-with-errors := "Complete with errors"; (: only applicable to PROCESS module - at least 1 document failed processing (FAIL-ON-ERROR is false) :)
+declare variable $module-status-unsuccessful := "Unsuccessful"; (: the module failed processing (if PROCESS module, FAIL-ON-ERROR is true) :)
+
+(: chunk status (in the chunk status doc and job status doc) :)
+declare variable $chunk-status-pending := "Pending"; (: the chunk status document has been created, but work has not yet begun on this chunk :)
+declare variable $chunk-status-queued := "Queued"; (: all the documents in this chunk have been queued into a task queue being worked by a thread :)
+declare variable $chunk-status-successful := "Successful"; (: all the documents in this chunk have processed successfully :)
+declare variable $chunk-status-complete-with-errors := "Complete with errors"; (: all the documents in this chunk have processed and at least 1 failed (FAIL-ON-ERROR is false) :)
+declare variable $chunk-status-unsuccessful := "Unsuccessful"; (: at least 1 document in this chunk failed processing and the job stopped (FAIL-ON-ERROR is true) :)
+
+(: document status (in the chunk status doc) :)
+declare variable $document-status-pending := "Pending"; (: the document ID has been selected by the selector module :)
+declare variable $document-status-queued := "Queued"; (: the document ID has been queued into a task queue being worked by a thread :)
+declare variable $document-status-successful := "Successful"; (: the document ID has finished processing successfully :)
+declare variable $document-status-unsuccessful := "Unsuccessful"; (: the document ID has finished processing unsuccessfully :)
+
+
+declare variable $thread-count := 8; (: TODO make this a corb param :)
+declare variable $update-frequency := 1; (: TODO make this a param :)
+
+declare variable $batch-size := 1; (: TODO make this a corb param :)
+declare variable $batch-uri-delim := ";"; (: TODO make this a corb param :)
 
 declare function ps:run(
-  $corb-properties as map:map (: corb properties (eg URIS-MODULE) :)
-  ) as xs:string (: a UUID for the job :)
-{
-  ps:run($corb-properties, ())
-};
-
-declare function ps:run(
-  $corb-properties as map:map, (: corb properties (eg URIS-MODULE) :)
-  $chunk-size as xs:int? (: number of documents to process with each thread :)
-  ) as xs:string (: a UUID for the job :)
+  $params as map:map (: parameters - mostly corb properties (eg URIS-MODULE), but also any applicable pink slipper params :)
+) as xs:string (: a UUID for the job :)
 {
   let $_ := xdmp:trace($trace-event-name, "Entering ps:run")
   (: confirm required corb properties are present :)
-  let $selector-module-path := map:get($corb-properties, "URIS-MODULE")
-  let $process-module-path := map:get($corb-properties, "PROCESS-MODULE")
+  let $selector-module-path := map:get($params, "URIS-MODULE")
+  let $process-module-path := map:get($params, "PROCESS-MODULE")
   let $_ := if (fn:empty($selector-module-path) or fn:empty($process-module-path))
   then fn:error(xs:QName("MISSINGREQUIREDCORBPROPERTIES"), "CORB properties URIS-MODULE and PROCESS-MODULE are required")
   else ()
-  let $_ := if ($chunk-size le 0)
-  then fn:error(xs:QName("INVALIDCHUNKSIZE"), "Chunk size must be greater than 0")
-  else ()
   
-  let $chunk-size := ($chunk-size, $default-chunk-size)[1]
   let $job-id := sem:uuid-string()
   let $start-time := fn:current-dateTime()
-  let $thread-statuses := map:map()
   
   
   (: corb properties :)
   let $init-vars := map:map()
-  let $selector-vars := map:map()
+  let $uris-vars := map:map()
   let $pre-batch-vars := map:map()
   let $process-vars := map:map()
   let $post-batch-vars := map:map()
-  let $_ := for $param in map:keys($corb-properties)
+  let $_ := for $param in map:keys($params)
     return if (fn:starts-with($param, "INIT-MODULE."))
-    then map:put($init-vars, fn:substring-after($param, "INIT-MODULE."), map:get($corb-properties, $param))
+    then map:put($init-vars, fn:substring-after($param, "INIT-MODULE."), map:get($params, $param))
     else if (fn:starts-with($param, "URIS-MODULE."))
-    then map:put($selector-vars, fn:substring-after($param, "URIS-MODULE."), map:get($corb-properties, $param))
+    then map:put($uris-vars, fn:substring-after($param, "URIS-MODULE."), map:get($params, $param))
     else if (fn:starts-with($param, "PRE-BATCH-MODULE."))
-    then map:put($pre-batch-vars, fn:substring-after($param, "PRE-BATCH-MODULE."), map:get($corb-properties, $param))
+    then map:put($pre-batch-vars, fn:substring-after($param, "PRE-BATCH-MODULE."), map:get($params, $param))
     else if (fn:starts-with($param, "PROCESS-MODULE."))
-    then map:put($process-vars, fn:substring-after($param, "PROCESS-MODULE."), map:get($corb-properties, $param))
+    then map:put($process-vars, fn:substring-after($param, "PROCESS-MODULE."), map:get($params, $param))
     else if (fn:starts-with($param, "POST-BATCH-MODULE."))
-    then map:put($post-batch-vars, fn:substring-after($param, "POST-BATCH-MODULE."), map:get($corb-properties, $param))
+    then map:put($post-batch-vars, fn:substring-after($param, "POST-BATCH-MODULE."), map:get($params, $param))
     else ()
   
-  
-  (: run INIT-MODULE :)
-  let $init-module-path := map:get($corb-properties, "INIT-MODULE")
-  let $_ := if (fn:exists($init-module-path))
+  (: create job status document :)
+  (: set up INIT-MODULE :)
+  let $init-module := map:get($params, "INIT-MODULE")
+  let $init-element := if (fn:exists($init-module))
   then
-    (: execute in a different transaction so results of INIT-MODULE are visisble :)
-    ps:invoke-in-different-transaction($init-module-path, $init-vars)
+    <ps:initModule>
+      <ps:moduleStatus>{$module-status-pending}</ps:moduleStatus>
+      <ps:modulePath>{$init-module}</ps:modulePath>
+      {ps:create-variables-element($init-vars)}
+    </ps:initModule>
   else ()
   
+  (: set up URIS-MODULE :)
+  let $uris-module := map:get($params, "URIS-MODULE")
+  let $uris-element := if (fn:exists($uris-module))
+  then
+    <ps:urisModule>
+      <ps:moduleStatus>{$module-status-pending}</ps:moduleStatus>
+      <ps:modulePath>{$uris-module}</ps:modulePath>
+      {ps:create-variables-element($uris-vars)}
+    </ps:urisModule>
+  else ()
   
-  (: run URIS-MODULE :)
-  (: execute in a different transaction so results of INIT-MODULE are visisble :)
-  let $job-document-ids := ps:invoke-in-different-transaction($selector-module-path, $selector-vars)
+  (: set up PRE-BATCH-MODULE :)
+  let $pre-batch-module := map:get($params, "PRE-BATCH-MODULE")
+  let $pre-batch-element := if (fn:exists($pre-batch-module))
+  then
+    <ps:preBatchModule>
+      <ps:moduleStatus>{$module-status-pending}</ps:moduleStatus>
+      <ps:modulePath>{$pre-batch-module}</ps:modulePath>
+      {ps:create-variables-element($pre-batch-vars)}
+    </ps:preBatchModule>
+  else ()
+  
+  (: set up PROCESS-MODULE :)
+  let $process-module := map:get($params, "PROCESS-MODULE")
+  let $process-element := if (fn:exists($process-module))
+  then
+    <ps:processModule>
+      <ps:moduleStatus>{$module-status-pending}</ps:moduleStatus>
+      <ps:modulePath>{$process-module}</ps:modulePath>
+      {ps:create-variables-element($process-vars)}
+      <ps:chunks/>
+    </ps:processModule>
+  else ()
+  
+  (: set up POST-BATCH-MODULE :)
+  let $post-batch-module := map:get($params, "POST-BATCH-MODULE")
+  let $post-batch-element := if (fn:exists($post-batch-module))
+  then
+    <ps:postBatchModule>
+      <ps:moduleStatus>{$module-status-pending}</ps:moduleStatus>
+      <ps:modulePath>{$post-batch-module}</ps:modulePath>
+      {ps:create-variables-element($post-batch-vars)}
+    </ps:postBatchModule>
+  else ()
+  
+  let $job-status-doc :=
+    <ps:job>
+      <ps:jobId>{$job-id}</ps:jobId>
+      <ps:jobStatus>{$job-status-processing}</ps:jobStatus>
+      <ps:threadCount>{$thread-count}</ps:threadCount>
+      <ps:startTime>{$start-time}</ps:startTime>
+      <ps:endTime/>
+      <ps:modules>
+        {$init-element}
+        {$uris-element}
+        {$pre-batch-element}
+        {$process-element}
+        {$post-batch-element}
+      </ps:modules>
+    </ps:job>
+  
+  return (
+    (: insert the job status doc :)
+    xdmp:document-insert(
+      ps:get-job-status-doc-uri($job-id),
+      $job-status-doc
+    ),
+    (: spawn init module :)
+    xdmp:spawn-function(function() {ps:execute-init-module($job-id)}, $update-options),
+    (: return the job id :)
+    $job-id
+  )
+};
+
+declare function ps:complete-job(
+  $job-status-doc as document-node(), (: the job status document :)
+  $module-status as xs:string? (: $module-status-successful, $module-status-unsuccessful, or empty sequence (if there was no module executed as part of this transaction) :)
+) as empty-sequence()
+{
+  let $module-statuses := ($job-status-doc/ps:job/ps:modules/*[not(. instance of element(ps:postBatchModule))]/ps:moduleStatus/text()/fn:string(), $module-status)
+  let $job-status := if (every $module-status in $module-statuses satisfies $module-status eq $module-status-successful)
+  then $job-status-successful
+  else $job-status-complete-with-errors
+  return (
+    xdmp:node-replace(
+      $job-status-doc/ps:job/ps:jobStatus/text(),
+      text {$job-status}
+    ),
+    xdmp:node-insert-child(
+      $job-status-doc/ps:job/ps:endTime,
+      text {fn:current-dateTime()}
+    )
+  )
+};
+
+declare function ps:create-variables-map(
+  $module as element() (: the module element (eg ps:processModule) to look in for variables :)
+) as map:map (: the map containing the variables :)
+{
+  let $variables := map:map()
+  let $_ := for $variable in $module/ps:moduleVariables/ps:variable
+    return map:put($variables, $variable/ps:name/fn:string(), $variable/ps:value/fn:string())
+  return $variables
+};
+
+(: execute the module defined by the module element passed in :)
+declare function ps:execute-module(
+  $job-status-doc as document-node(), (: the job status document :)
+  $module as element()?, (: the module element (eg ps:processModule) to execute :)
+  $last-module as xs:boolean (: true if this is the last module and we need to update status :)
+) as xs:anyAtomicType* (: return whatever the module returns :)
+{
+  if (fn:exists($module))
+  then
+    try {
+      let $module-path := $module/ps:modulePath/fn:string()
+      let $variables := ps:create-variables-map($module)
+      return (
+        xdmp:invoke(
+          $module-path,
+          $variables,
+          $invoke-options
+        ),
+        (: update job status doc module status :)
+        xdmp:node-replace(
+          $module/ps:moduleStatus/text(),
+          text {$module-status-successful}
+        ),
+        (: update job status doc overall status if applicable:)
+        if ($last-module)
+        then ps:complete-job($job-status-doc, $job-status-successful)
+        else ()
+      )
+    } catch ($e)
+    {
+      (: update job status doc module status :)
+      (: TODO: more error info :)
+      (: TODO: stop the job? :)
+      xdmp:node-replace(
+        $module/ps:moduleStatus/text(),
+        text {$module-status-unsuccessful}
+      ),
+      (: update job status doc overall status if applicable:)
+      if ($last-module)
+      then ps:complete-job($job-status-doc, $module-status-unsuccessful)
+      else ()
+    }
+  else if ($last-module)
+  then ps:complete-job($job-status-doc, ())
+  else ()
+};
+
+declare function ps:execute-init-module(
+  $job-id as xs:string
+) as empty-sequence()
+{
+  let $job-status-doc := ps:get-job-status-doc($job-id, fn:true())
+  let $module := $job-status-doc/ps:job/ps:modules/ps:initModule
+  let $_ := ps:execute-module($job-status-doc, $module, fn:false())
+  (: spawn the next module :)
+  return xdmp:spawn-function(function() {ps:execute-uris-module($job-id)}, $update-options)
+};
+
+declare function ps:execute-uris-module(
+  $job-id as xs:string
+) as empty-sequence()
+{
+  let $job-status-doc := ps:get-job-status-doc($job-id, fn:true())
+  let $module := $job-status-doc/ps:job/ps:modules/ps:urisModule
+  let $job-document-ids := ps:execute-module($job-status-doc, $module, fn:false())
   
   (: handle additional corb parameters from selector module (before count of URIs) :)
   let $document-count-index := ps:get-count-index($job-document-ids)
@@ -98,195 +294,375 @@ declare function ps:run(
     if (fn:starts-with($param, "PRE-BATCH-MODULE."))
     then
       let $key-value := fn:tokenize(fn:substring-after($param, "PRE-BATCH-MODULE."), "=")
-      return map:put($pre-batch-vars, $key-value[1], $key-value[2])
+      let $variables-element := $job-status-doc/ps:job/ps:modules/ps:preBatchModule/ps:moduleVariables
+      return ps:add-or-replace-module-vars($variables-element, $key-value[1], $key-value[2])
     else if (fn:starts-with($param, "PROCESS-MODULE."))
     then
       let $key-value := fn:tokenize(fn:substring-after($param, "PROCESS-MODULE."), "=")
-      return map:put($process-vars, $key-value[1], $key-value[2])
+      let $variables-element := $job-status-doc/ps:job/ps:modules/ps:processModule/ps:moduleVariables
+      return ps:add-or-replace-module-vars($variables-element, $key-value[1], $key-value[2])
     else if (fn:starts-with($param, "POST-BATCH-MODULE."))
     then
       let $key-value := fn:tokenize(fn:substring-after($param, "POST-BATCH-MODULE."), "=")
-      return map:put($post-batch-vars, $key-value[1], $key-value[2])
+      let $variables-element := $job-status-doc/ps:job/ps:modules/ps:postBatchModule/ps:moduleVariables
+      return ps:add-or-replace-module-vars($variables-element, $key-value[1], $key-value[2])
     else fn:error(xs:QName("INVALIDCUSTOMINPUT"), $param || " is not a valid custom input for CORB")
   
-  
-  (: run PRE-BATCH-MODULE :)
-  let $pre-batch-module := map:get($corb-properties, "PRE-BATCH-MODULE")
-  let $_ := if (fn:exists($pre-batch-module))
-  then
-    (: execute in a different transaction so results of INIT-MODULE are visisble :)
-    ps:invoke-in-different-transaction($pre-batch-module, $pre-batch-vars)
-  else ()
-  
-  
-  (: run PROCESS-MODULE :)
-  let $thread-count := fn:ceiling(fn:count($job-document-ids) div $chunk-size)
-  let $_ := for $thread in 1 to $thread-count
-    let $thread-id := sem:uuid-string()
-    let $_ := map:put($thread-statuses, $thread-id, $status-incomplete)
-    let $start := ($thread - 1) * $chunk-size + 1
-    let $thread-document-ids := fn:subsequence($job-document-ids, $start, $chunk-size)
-    
-    let $_ := ps:create-thread-status-document($job-id, $thread-id, $status-incomplete, (), (), $thread-document-ids, (), map:map())
-    return ps:process-documents($process-module-path, $process-vars, $job-id, $thread-id)
-
-  
-  (: set up POST-BATCH-MODULE :)
-  let $post-batch-module := map:get($corb-properties, "POST-BATCH-MODULE")
-  let $post-batch-element := if (fn:exists($post-batch-module))
-  then
-    <ps:postBatchModule>
-      <ps:path>{$post-batch-module}</ps:path>
-      <ps:status>{$status-incomplete}</ps:status>
-      <ps:variables>
-        {
-          for $var in map:keys($post-batch-vars)
-          return (
-          <ps:variable>
-            <ps:name>{$var}</ps:name>
-            <ps:value>{map:get($post-batch-vars, $var)}</ps:value>
-          </ps:variable>
-         )
-        }
-      </ps:variables>
-    </ps:postBatchModule>
-  else <ps:postBatchModule/>
-  
-  let $_ := ps:create-job-status-document($job-id, $start-time, $chunk-size, $thread-statuses, $post-batch-element)
-  
-  return $job-id
-};
-
-declare function ps:invoke-in-different-transaction(
-  $module-path as xs:string, (: the path to the module :)
-  $module-vars as map:map? (: module vars :)
-  ) as item()* (: a sequence beginning with the count of documents, then the document IDs (often a URI) :)
-{
-  xdmp:invoke(
-    $module-path,
-    $module-vars,
-    <options xmlns="xdmp:eval">
-      <isolation>different-transaction</isolation>
-    </options>
+  (: calculate chunk documents for tracking PROCESS-MODULE execution :)
+  (: create a map of chunk IDs to document IDs :)
+  (:let $chunk-id-to-doc-ids := map:map():)
+  let $total-chunk-count := fn:ceiling(fn:count($job-document-ids) div $chunk-size)
+  let $_ := for $chunk in 1 to $total-chunk-count
+    let $chunk-id := sem:uuid-string()
+    let $start := ($chunk - 1) * $chunk-size + 1
+    let $chunk-document-ids := fn:subsequence($job-document-ids, $start, $chunk-size)
+    return (
+      (: add chunks to job status doc :)
+      xdmp:node-insert-child(
+        $job-status-doc/ps:job/ps:modules/ps:processModule/ps:chunks,
+        <ps:chunk>
+          <ps:chunkId>{$chunk-id}</ps:chunkId>
+          <ps:chunkStatus>{$chunk-status-pending}</ps:chunkStatus>
+        </ps:chunk>
+      ),
+      (: TODO: if I'm spawning creation of chunk docs, how do I know when they're done and process module can begin? :)
+      (: TODO: for now, don't spawn this :)
+      (: spawn a task to create chunk status doc :)
+      (:xdmp:spawn-function(
+        function() {:)
+          ps:create-initial-chunk-status-document(
+            $job-id,
+            $chunk-id,
+            $chunk-document-ids
+          )
+        (:},
+        $update-options
+      ):)
     )
+  
+  (: spawn the next module :)
+  return xdmp:spawn-function(function() {ps:execute-pre-batch-module($job-id)}, $update-options)
 };
 
-declare function ps:process-documents(
+declare function ps:execute-pre-batch-module(
+  $job-id as xs:string
+) as empty-sequence()
+{
+  let $job-status-doc := ps:get-job-status-doc($job-id, fn:true())
+  let $module := $job-status-doc/ps:job/ps:modules/ps:preBatchModule
+  let $_ := ps:execute-module($job-status-doc, $module, fn:false())
+  (: spawn the next module :)
+  return xdmp:spawn-function(function() {ps:execute-process-module($job-id)}, $update-options)
+};
+
+declare function ps:execute-process-module(
+  $job-id as xs:string
+) as empty-sequence()
+{
+  let $job-status-doc := ps:get-job-status-doc($job-id, fn:true())
+  let $module := $job-status-doc/ps:job/ps:modules/ps:processModule
+  let $module-path := $module/ps:modulePath/fn:string()
+  let $variables := ps:create-variables-map($module)
+  let $thread-count := $job-status-doc/ps:job/ps:threadCount/fn:data()
+  let $chunk-to-documents := ps:populate-task-queue($job-id, $thread-count)
+  return 
+    for $chunk-id at $thread-number in map:keys($chunk-to-documents) return
+      ps:process-document(
+        $module-path,
+        $variables,
+        $job-id,
+        $chunk-id,
+        $thread-number,
+        map:get($chunk-to-documents, $chunk-id),
+        map:map(),
+        map:map()
+      )
+};
+
+declare function ps:execute-post-batch-module(
+  $job-id as xs:string
+) as empty-sequence()
+{
+  let $job-status-doc := ps:get-job-status-doc($job-id, fn:true())
+  let $module := $job-status-doc/ps:job/ps:modules/ps:postBatchModule
+  let $_ := ps:execute-module($job-status-doc, $module, fn:true())
+  return ()
+};
+
+declare function ps:add-or-replace-module-vars(
+  $variables-element as element(ps:moduleVariables),
+  $name as xs:string, (: the names of the variable :)
+  $value as xs:string (: the value of the variable :)
+)
+{
+  let $new-variable-element := ps:create-variable-element($name, $value)
+  let $existing-variable-element := $variables-element/ps:variable[ps:name/fn:string eq $name]
+  return if (fn:exists($existing-variable-element))
+  then xdmp:node-replace($existing-variable-element, $new-variable-element)
+  else xdmp:node-insert-child($variables-element, $new-variable-element)
+};
+
+declare function ps:create-variables-element(
+  $variables as map:map (: map of variable names to values :)
+) as element(ps:moduleVariables)
+{
+  <ps:moduleVariables>
+    {
+      for $var in map:keys($variables)
+        return ps:create-variable-element($var, map:get($variables, $var))
+    }
+  </ps:moduleVariables>
+};
+
+(: create individual ps:variable element :)
+declare function ps:create-variable-element(
+  $name as xs:string, (: the names of the variable :)
+  $value as xs:string (: the value of the variable :)
+) as element(ps:variable)
+{
+  <ps:variable>
+    <ps:name>{$name}</ps:name>
+    <ps:value>{$value}</ps:value>
+  </ps:variable>
+};
+
+declare function ps:create-variable-map(
+  $variables as element(ps:moduleVariables)
+) as map:map
+{
+  let $process-module-variables := map:map()
+  let $_ := for $variable in $variables/ps:variable return
+    map:put($process-module-variables, $variable/ps:name/fn:string(), $variable/ps:value/fn:string())
+  return $process-module-variables
+};
+
+(: TODO: must take $batch-size as a param :)
+(: process BATCH-SIZE documents :)
+declare function ps:process-document(
   $process-module-path as xs:string, (: the path to the process module :)
   $process-vars as map:map?, (: process vars in addition to $URI :)
   $job-id as xs:string, (: the UUID for the job :)
-  $thread-id as xs:string (: the UUID for this thread :)
+  $chunk-id as xs:string, (: the UUID for the chunk :)
+  $thread-number as xs:int, (: the number for this thread (from 1 to thread count) :)
+  $document-ids as xs:string*, (: document IDs (often URIs) of documents that this thread will process (BATCH-SIZE at a time) :)
+  $successful as map:map, (: map of successful document IDs :)
+  $failed as map:map (: map of failed document IDs to errors :)
   ) as empty-sequence()
 {
-  (: create an anonymous function because spawn takes a module, and spawn-fucntion takes 0-arity function :)
-  let $_ := xdmp:trace($trace-event-name, "Entering ps:process-documents")
+  let $_ := xdmp:trace($trace-event-name, "Entering ps:process-document")
   let $f := function() {
     let $_ := xdmp:trace($trace-event-name, "inside anonymous function")
-    let $thread-start-time := fn:current-dateTime()
-    let $failed := map:map()
-    let $successful := map:map()
     
-    let $thread-status-doc := ps:get-thread-status-doc($thread-id)
-    let $document-ids := $thread-status-doc/ps:threadStatus/ps:documentStatus/ps:unprocessedDocuments/ps:documentId/fn:string()
-    let $_ := for $document-id in $document-ids
-      (: invoke the users process module :)
-      return try
-      {
-        let $local-process-vars := ps:add-uri-to-vars($process-vars, $document-id)
-        let $_ := xdmp:invoke($process-module-path, $local-process-vars)
-        return map:put($successful, $document-id, $document-id)
-      }
-      catch ($e)
-      {
-        xdmp:trace($trace-event-name, $e),
-        map:put($failed, $document-id, $e)
-      }
-    (: update thread and job status docs :)
-    let $thread-end-time := fn:current-dateTime()
-    let $_ := xdmp:trace($trace-event-name, "about to re-create status doc from anonymous function")
-    let $thread-status := if (map:count($failed) > 0) then $status-unsuccessful else $status-successful
-    let $_ := ps:create-thread-status-document($job-id, $thread-id, $thread-status, $thread-start-time, $thread-end-time, (), map:keys($successful), $failed)
-    return ps:update-job-status-document-for-thread($job-id, $thread-id, $thread-status)
-  }
-  let $options :=
-    <options xmlns="xdmp:eval">
-      <transaction-mode>update-auto-commit</transaction-mode>
-    </options>
-  return xdmp:spawn-function($f, $options)
+    (: dequeue batch-size document IDs and process them :)
+    let $documents-to-process := $document-ids[1 to $batch-size] (: these are the document IDs to process this iteration :)
+    let $document-ids := fn:subsequence($document-ids, $batch-size + 1) (: remove these document IDs for the next iteration :)
+    let $_ := try
+    {
+      let $local-process-vars := ps:add-uri-to-vars($process-vars, fn:string-join($documents-to-process, $batch-uri-delim))
+      let $_ := xdmp:invoke($process-module-path, $local-process-vars)
+      return for $document-to-process in $documents-to-process
+        return map:put($successful, $document-to-process, $document-to-process)
+    }
+    catch ($e)
+    {
+      xdmp:trace($trace-event-name, $e),
+      for $document-to-process in $documents-to-process
+        return map:put($failed, $document-to-process, $e)
+    }
+    
+    (: update status if applicable :)
+    let $update-had-errors := map:count($failed) gt 0 (: will need to know this if the job is done :)
+    let $_ := if (fn:count($document-ids) mod $update-frequency eq 0) (: TODO: this won't work with chunk size > 1 (or $update-frequency > 1???) :)
+    then
+      (
+        (: update chunk status doc :)
+        ps:update-chunk-status-doc(
+          $chunk-id,
+          map:keys($successful),
+          $failed
+        ),
+        (: clear memory-tracked status :)
+        map:clear($successful),
+        map:clear($failed)
+      )
+    else ()
+    
+    (: get new chunk ID and document IDs (if applicable) and spawn next iteration :)
+    let $old-chunk-id := $chunk-id (: we'll need this later to determine if all other chunks are done :)
+    let $new-chunk-id-and-document-ids := if (fn:empty($document-ids))
+    then ( (: this chunk is complete :)
+      (: no more document IDs in task queue, grab some more :)
+      ps:populate-task-queue($job-id, 1),
+      (: update job status doc for overall chunk status and chunk status doc :)
+      let $job-status-doc := ps:get-job-status-doc($job-id, fn:true())
+      let $chunk-status-doc := ps:get-chunk-status-doc($chunk-id, fn:true())
+      let $chunk-status := if (
+        $update-had-errors or
+        (some $document-status in $job-status-doc/ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk/ps:chunkStatus/fn:string()
+        satisfies $document-status eq $document-status-unsuccessful)
+      )
+      then $chunk-status-complete-with-errors
+      else $chunk-status-successful
+      return (
+        xdmp:node-replace(
+          $chunk-status-doc/ps:chunk/ps:chunkStatus/text(),
+          text {$chunk-status}
+        ),
+        xdmp:node-replace(
+          $job-status-doc/ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk/ps:chunkStatus/text(),
+          text {$chunk-status}
+        ),
+        if (ps:all-chunks-complete($job-id, $chunk-id))
+        then (: all chunks are complete :)
+          (: update job status (module status) :)
+          (:let $job-status-doc := ps:get-job-status-doc($job-id, fn:true()):)
+          let $module-status := if (
+            (: this update had errors :)
+            $update-had-errors
+            or (: this chunk had errors :)
+            $chunk-status eq $chunk-status-complete-with-errors
+            or (: some other chunk had errors :)
+            (some $chunk-status in $job-status-doc/ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk/ps:chunkStatus/fn:string()
+            satisfies $chunk-status eq $chunk-status-complete-with-errors)
+          )
+          then $module-status-complete-with-errors
+          else $module-status-successful
+          return (
+            xdmp:node-replace(
+              $job-status-doc/ps:job/ps:modules/ps:processModule/ps:moduleStatus/text(),
+              text {$module-status}
+            ),
+            (: execute post batch module :)
+            xdmp:spawn-function(function() {ps:execute-post-batch-module($job-id)}, $update-options)
+            (:ps:execute-post-batch-module($job-id):)
+          )
+        else ()
+      )
+    )
+    else map:entry($chunk-id, $document-ids)
+    (: this makes no changes if we still had document IDs to process :)
+    let $chunk-id := map:keys($new-chunk-id-and-document-ids)
+    let $document-ids := if (fn:exists($chunk-id))
+    then map:get($new-chunk-id-and-document-ids, $chunk-id)
+    else ()
+    
+    let $_ := if (fn:exists($document-ids))
+    then (: create another task for the next document ID :)
+      ps:process-document(
+        $process-module-path,
+        $process-vars,
+        $job-id,
+        $chunk-id,
+        $thread-number,
+        $document-ids,
+        $successful,
+        $failed
+      )
+      else ()
+    return ()
+  } (: end anonymous function :)
+    
+  return xdmp:spawn-function($f, $update-options)
 };
 
-(: This function inserts the job status document :)
-declare function ps:create-job-status-document(
+(: return true if all chunks except the one for $chunk-id have been processed :)
+declare function ps:all-chunks-complete(
   $job-id as xs:string, (: the UUID for the job :)
-  $start-time as xs:dateTime, (: the start date/time of the job :)
-  $chunk-size as xs:int, (: number of documents to process with each thread :)
-  $thread-statuses as map:map, (: a map of thread IDs to status ("Incomplete", "Successful", or "Unsuccessful") :)
-  $post-batch-element as element(ps:postBatchModule) (: element containing post batch modules URI and variables :)
-  ) as empty-sequence()
+  $chunk-id as xs:string (: the UUID for the chunk to exclude :)
+) as xs:boolean (: whether all chunks are complete :)
 {
-  let $_ := xdmp:trace($trace-event-name, "Entering ps:create-job-status-document")
-  let $uri := ps:get-job-status-doc-uri($job-id)
-  let $doc :=
-    <ps:jobStatus>
-      <ps:jobId>{$job-id}</ps:jobId>
-      <ps:startTime>{$start-time}</ps:startTime>
-      <ps:chunkSize>{$chunk-size}</ps:chunkSize>
-      {$post-batch-element}
-      <ps:threads>
-        {
-        for $thread-id in map:keys($thread-statuses) return
-          <ps:thread>
-            <ps:threadId>{$thread-id}</ps:threadId>
-            <ps:threadStatus>{map:get($thread-statuses, $thread-id)}</ps:threadStatus>
-          </ps:thread>
-        }
-      </ps:threads>
-    </ps:jobStatus>
-
-  let $_ := xdmp:trace($trace-event-name, "Exiting ps:create-job-status-document")
-  return xdmp:document-insert($uri, $doc, xdmp:default-permissions(), $collection)
-};
-
-(: This function inserts the thread status document :)
-declare function ps:create-thread-status-document(
-  $job-id as xs:string, (: the UUID for the job :)
-  $thread-id as xs:string, (: the UUID for the thread :)
-  $thread-status as xs:string, (: the status (Incomplete, Successful, or Unsuccessful) :)
-  $start-time as xs:dateTime?, (: the start time for the thread :)
-  $end-time as xs:dateTime?, (: the end time for the thread :)
-  $unprocessed-document-ids as xs:string*, (: document IDs (often a URI) of documents to be processed :)
-  $successful-document-ids as xs:string*, (: document IDs (often a URI) of documents that were processed successfully :)
-  $unsuccessful-document-ids as map:map (: map of document IDs (often a URI) of documents that were processed unsuccessfully to errors :)
-  ) as empty-sequence()
-{
-  let $_ := xdmp:trace($trace-event-name, "Entering ps:create-thread-status-document")
-  let $uri := ps:get-thread-status-doc-uri($thread-id)
-  let $doc :=
-    <ps:threadStatus>
-      <ps:jobId>{$job-id}</ps:jobId>
-      <ps:threadId>{$thread-id}</ps:threadId>
-      <ps:threadStatus>{$thread-status}</ps:threadStatus>
-      <ps:startTime>{$start-time}</ps:startTime>
-      <ps:endTime>{$end-time}</ps:endTime>
-      <ps:documentStatus>
-        <ps:unprocessedDocuments>
-          {for $document-id in $unprocessed-document-ids return <ps:documentId>{$document-id}</ps:documentId>}
-        </ps:unprocessedDocuments>
-        <ps:successfulDocuments>
-          {for $document-id in $successful-document-ids return <ps:documentId>{$document-id}</ps:documentId>}
-        </ps:successfulDocuments>
-        <ps:unsuccessfulDocuments>
-          {for $document-id in map:keys($unsuccessful-document-ids) return
-            <ps:error documentId="{$document-id}">{map:get($unsuccessful-document-ids, $document-id)}</ps:error>
-          }
-        </ps:unsuccessfulDocuments>
-      </ps:documentStatus>
-    </ps:threadStatus>
-
-  return (
-    xdmp:document-insert($uri, $doc, xdmp:default-permissions(), $collection),
-    xdmp:trace($trace-event-name, "Exiting ps:create-thread-status-document")
+  fn:empty(
+    ps:get-job-status-doc($job-id, fn:true())/ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk
+    [ps:chunkId/fn:string() ne $chunk-id and ps:chunkStatus/fn:string() eq $chunk-status-pending]
   )
+};
+
+(: update the chunk status doc :)
+declare function ps:update-chunk-status-doc(
+  $chunk-id as xs:string, (: the UUID for the chunk :)
+  $successful-document-ids as xs:string*, (: map of successful document IDs :)
+  $unsuccessful-document-ids as map:map (: map of failed document IDs to errors :)
+) as empty-sequence()
+{
+  let $chunk-status-doc-documents := ps:get-chunk-status-doc($chunk-id, fn:true())/ps:chunk/ps:documents
+  return (
+    for $successful-document-id in $successful-document-ids
+      return xdmp:node-replace(
+        $chunk-status-doc-documents/ps:document[ps:documentId eq $successful-document-id]/ps:documentStatus/text(),
+        text { $document-status-successful }
+      ),
+    for $unsuccessful-document-id in map:keys($unsuccessful-document-ids)
+      let $this-document := $chunk-status-doc-documents/ps:document[ps:documentId eq $unsuccessful-document-id]
+      return (
+        xdmp:node-replace(
+          $this-document/ps:documentStatus/text(),
+          text { $document-status-unsuccessful }
+        ),
+        xdmp:node-insert-child(
+          $this-document,
+          <ps:error>{map:get($unsuccessful-document-ids, $unsuccessful-document-id)}</ps:error>
+        )
+      )
+  )
+};
+
+(: insert the initial chunk status document :)
+declare function ps:create-initial-chunk-status-document(
+  $job-id as xs:string, (: the UUID for the job :)
+  $chunk-id as xs:string, (: the UUID for the chunk :)
+  $document-ids as xs:string* (: document IDs (often a URI) of documents that were processed successfully :)
+  ) as empty-sequence()
+{
+  let $_ := xdmp:trace($trace-event-name, "Entering ps:create-initial-chunk-status-document")
+  let $uri := ps:get-chunk-status-doc-uri($chunk-id)
+  let $doc :=
+    <ps:chunk>
+      <ps:jobId>{$job-id}</ps:jobId>
+      <ps:chunkId>{$chunk-id}</ps:chunkId>
+      <ps:chunkStatus>{$chunk-status-pending}</ps:chunkStatus>
+      <ps:startTime>{fn:current-dateTime()}</ps:startTime>
+      <ps:endTime/>
+      <ps:documents>
+        {
+          for $document-id in $document-ids
+            return
+              <ps:document>
+                <ps:documentId>{$document-id}</ps:documentId>
+                <ps:documentStatus>{$document-status-pending}</ps:documentStatus>
+              </ps:document>
+        }
+      </ps:documents>
+    </ps:chunk>
+
+  let $_ := xdmp:document-insert($uri, $doc)
+  return xdmp:trace($trace-event-name, "Exiting ps:create-initial-chunk-status-document")
+};
+
+declare function ps:populate-task-queue(
+  $job-id as xs:string, (: the UUID for the job :)
+  $thread-count as xs:int (: the number of threads for the job :)
+) as map:map (: map of chunk ID to associated document IDs :)
+{
+  let $job-status-doc := ps:get-job-status-doc($job-id, fn:true())
+  let $chunks := $job-status-doc/ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk[ps:chunkStatus/fn:string() eq $chunk-status-pending][1 to $thread-count]
+  let $chunk-to-documents := map:map() (: chunk IDs to sequences of associated document IDs :)
+  let $_ := for $chunk in $chunks
+    (: build the map :)
+    let $chunk-id := $chunk/ps:chunkId/fn:string()
+    let $chunk-status-doc := ps:get-chunk-status-doc($chunk-id, fn:true())
+    return (
+      map:put(
+        $chunk-to-documents,
+        $chunk-id,
+        $chunk-status-doc/ps:chunk/ps:documents/ps:document[ps:documentStatus/fn:string() eq $chunk-status-pending]/ps:documentId/fn:string()
+      ),
+      (: update chunk status in job status doc :)
+      xdmp:node-replace(
+        $chunk/ps:chunkStatus/text(),
+        text {$chunk-status-queued}
+      )
+    )
+  return $chunk-to-documents
 };
 
 declare function ps:add-uri-to-vars(
@@ -298,59 +674,6 @@ declare function ps:add-uri-to-vars(
   let $return-vars := map:new($vars)
   let $_ := map:put($return-vars, "URI", $uri)
   return $return-vars
-};
-
-declare function ps:update-job-status-document-for-thread(
-  $job-id as xs:string, (: the UUID for the job :)
-  $thread-id as xs:string, (: the UUID for the thread :)
-  $thread-status as xs:string (: the status for this thread :)
-  ) as empty-sequence()
-{
-  (: TODO: would a lock-for-update make this safer? :)
-  let $job-status-doc := ps:get-job-status-doc($job-id)
-  let $threads-complete := ps:are-threads-complete($job-id, $thread-id)
-  return (
-    xdmp:node-replace(
-      $job-status-doc/ps:jobStatus/ps:threads/ps:thread[ps:threadId = $thread-id]/ps:threadStatus,
-      <ps:threadStatus>{$thread-status}</ps:threadStatus>
-    ),
-    if ($threads-complete) then (
-      xdmp:trace($trace-event-name, "Completed main job"),
-      ps:execute-post-batch-module($job-id)
-    ) else ()
-  )
-};
-
-(: execute post-batch module (only if applicable) :)
-declare function ps:execute-post-batch-module(
-  $job-id as xs:string (: the UUID for the job :)
-) as empty-sequence()
-{
-  let $_ := xdmp:trace($trace-event-name, "Checking for post-batch module")
-  let $job-status-doc := ps:get-job-status-doc($job-id)
-  let $module-path := $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:path/fn:string()
-  (: return if there is no post-batch module :)
-  return if (fn:empty($module-path)) then
-    xdmp:trace($trace-event-name, "No post-batch module")
-  else
-    let $_ := xdmp:trace($trace-event-name, "Executing post-batch module at " || $module-path)
-    let $variables := map:new((
-      for $var in $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:variables/ps:variable
-        return map:entry($var/ps:name/fn:string(), $var/ps:value/fn:string())
-    ))
-    let $_ := try
-    {
-      xdmp:invoke($module-path, $variables),
-      xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-successful}</ps:status>)
-    }
-    catch ($e)
-    {
-      xdmp:trace($trace-event-name, $e),
-      (: TODO: add error info to status document :)
-      xdmp:node-replace($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:status>{$status-unsuccessful}</ps:status>)
-      (:xdmp:node-insert-after($job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status, <ps:error>{$e}</ps:error>):)
-    }
-    return xdmp:trace($trace-event-name, "post-batch module complete")
 };
 
 (: return the index in the sequence of the first item of type xs:integer :)
@@ -373,119 +696,96 @@ declare function ps:get-job-status-doc(
   $job-id as xs:string (: the UUID for the job :)
 ) as document-node()
 {
-  fn:doc(
-    ps:get-job-status-doc-uri($job-id)
-  )
+  ps:get-job-status-doc($job-id, fn:false())
 };
 
-declare function ps:get-thread-status-doc-uri(
-  $thread-id as xs:string (: the UUID for the thread :)
-  ) as xs:string (: URI for the thread status document :)
+(: return the job status document :)
+declare function ps:get-job-status-doc(
+  $job-id as xs:string, (: the UUID for the job :)
+  $lock as xs:boolean? (: whether to lock for update :)
+) as document-node()
 {
-  $base-uri || $thread-id || ".xml"
+  if ($lock)
+  then xdmp:lock-for-update(ps:get-job-status-doc-uri($job-id))
+  else (),
+  fn:doc(ps:get-job-status-doc-uri($job-id))
 };
 
-declare function ps:get-thread-status-doc(
-  $thread-id as xs:string (: the UUID for the thread :)
-  ) as document-node()* (: thread status document for the thread ID :)
+declare function ps:get-chunk-status-doc-uri(
+  $chunk-id as xs:string (: the UUID for the thread :)
+  ) as xs:string (: URI for the chunk status document :)
 {
-  fn:doc(
-    ps:get-thread-status-doc-uri($thread-id)
-  )
+  $base-uri || $chunk-id || ".xml"
 };
 
-declare function ps:get-thread-status-docs-for-job(
-  $job-id as xs:string (: the UUID for the job :)
-  ) as document-node()* (: thread status document(s) for the job :)
+(: return the chunk status document :)
+declare function ps:get-chunk-status-doc(
+  $chunk-id as xs:string (: the UUID for the chunk :)
+  ) as document-node()* (: chunk status document for the chunk ID :)
 {
-  for $thread-id in ps:get-job-status-doc($job-id)/ps:jobStatus/ps:threads/ps:thread/ps:threadId/fn:string()
-    return ps:get-thread-status-doc($thread-id)
+  ps:get-chunk-status-doc($chunk-id, fn:false())
+};
+
+(: return the chunk status document :)
+declare function ps:get-chunk-status-doc(
+  $chunk-id as xs:string, (: the UUID for the chunk :)
+  $lock as xs:boolean? (: whether to lock for update :)
+  ) as document-node()* (: chunk status document for the chunk ID :)
+{
+  if ($lock)
+  then xdmp:lock-for-update(ps:get-chunk-status-doc-uri($chunk-id))
+  else (),
+  fn:doc(ps:get-chunk-status-doc-uri($chunk-id))
+};
+
+declare function ps:get-chunk-status(
+  $chunk-id as xs:string (: the UUID for the chunk :)
+  ) as xs:string (: chunk status for the chunk ID :)
+{
+  fn:doc(ps:get-chunk-status-doc-uri($chunk-id))/ps:chunk/ps:chunkStatus/fn:string()
 };
 
 
 (: ====== Status retrieval functions start here ====== :)
-
-
-(: get the total number of documents to be processed for this job :)
-declare function ps:get-processed-document-count(
-  $job-id as xs:string (: the UUID for the job :)
-) as xs:nonNegativeInteger (: the number of documents processed :)
-{
-  (: number of complete thread status docs * number of documents per thread :)
-  xdmp:estimate(
-    cts:search(
-      /ps:threadStatus, (: according to my testing, this correctly excludes job status documents, even unfiltered :)
-      cts:and-query((
-        cts:element-value-query(xs:QName("ps:jobId"), $job-id),
-        cts:element-value-query(xs:QName("ps:threadStatus"), ($status-successful, $status-unsuccessful))
-      ))
-    )
-  )
-  *
-  ps:get-job-status-doc($job-id)/ps:jobStatus/ps:chunkSize/xs:int(.)
-};
-
-(: get the number of documents (not necessarily successfully) processed for this job :)
-declare function ps:get-total-document-count(
-  $job-id as xs:string (: the UUID for the job :)
-) as xs:nonNegativeInteger (: the number of documents processed :)
-{
-  (: number of thread status docs * number of documents per thread :)
-  xdmp:estimate(
-    cts:search(
-      /ps:threadStatus, (: according to my testing, this correctly excludes job status documents, even unfiltered :)
-      cts:element-value-query(xs:QName("ps:jobId"), $job-id)
-    )
-  )
-  *
-  ps:get-job-status-doc($job-id)/ps:jobStatus/ps:chunkSize/xs:int(.)
-};
 
 (: return the overall status of a job :)
 declare function ps:get-job-status(
   $job-id as xs:string (: the UUID for the job :)
   ) as xs:string (: job status :)
 {
-  let $job-status-doc := ps:get-job-status-doc($job-id)
-  let $_ := if (fn:empty($job-status-doc)) then fn:error(xs:QName("INVALIDJOBID"), "Job ID does not exist") else ()
-  (: TODO: do we need to check pre-batch status? :)
-  let $post-batch-status := $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status/fn:string()
-  let $thread-statuses := $job-status-doc/ps:jobStatus/ps:threads/ps:thread/ps:threadStatus/fn:string()
-  return if (some $status in ($thread-statuses, $post-batch-status) satisfies $status = $status-incomplete) then
-    $status-incomplete || " - " || ps:get-processed-document-count($job-id) || "/" || ps:get-total-document-count($job-id)
-    else if (some $status in ($thread-statuses, $post-batch-status) satisfies $status = $status-unsuccessful) then $status-unsuccessful
-    else $status-successful
+  ps:get-job-status-doc($job-id)/ps:job/ps:jobStatus/fn:string()
 };
 
-(: return fn:true() if this job is complete :)
-declare function ps:are-threads-complete(
+(: return the status of the init-module :)
+declare function ps:get-init-status(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:boolean (: whether all threads for this job are complete :)
+  ) as xs:string (: init status :)
 {
-  let $job-status := ps:get-job-status($job-id)
-  return $job-status = $status-successful or $job-status = $status-unsuccessful
+  ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:initModule/ps:moduleStatus/fn:string()
 };
 
-(: return fn:true() if this all threads in job except the one with the ID passed are complete :)
-(: TODO: make the above call this with no thread IDs? :)
-declare function ps:are-threads-complete(
-  $job-id as xs:string, (: the UUID for the job :)
-  $except-thread-id as xs:string (: the UUID for the thread to exclude :)
-  ) as xs:boolean (: whether all threads for this job except those excluded are complete :)
-{
-  every $thread-status
-    in ps:get-job-status-doc($job-id)/ps:jobStatus/ps:threads/ps:thread[ps:threadId/fn:string() != $except-thread-id]/ps:threadStatus/fn:string()
-    satisfies $thread-status = $status-successful or $thread-status = $status-unsuccessful
-};
-
-(: return the status of each thread within a job :)
-declare function ps:get-thread-statuses(
+(: return the status of the uris-module :)
+declare function ps:get-uris-status(
   $job-id as xs:string (: the UUID for the job :)
-  ) as element()* (: thread status elements :)
+  ) as xs:string (: uris status :)
 {
-  let $job-status-doc := ps:get-job-status-doc($job-id)
-  let $threads := $job-status-doc/ps:jobStatus/ps:threads/ps:thread
-  return $threads
+  ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:urisModule/ps:moduleStatus/fn:string()
+};
+
+(: return the status of the pre-batch-module :)
+declare function ps:get-pre-batch-status(
+  $job-id as xs:string (: the UUID for the job :)
+  ) as xs:string (: pre-batch status :)
+{
+  ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:preBatchModule/ps:moduleStatus/fn:string()
+};
+
+(: return the status of the process-module :)
+declare function ps:get-process-status(
+  $job-id as xs:string (: the UUID for the job :)
+  ) as xs:string (: process status :)
+{
+  ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:processModule/ps:moduleStatus/fn:string()
 };
 
 (: return the status of the post-batch-module :)
@@ -493,15 +793,24 @@ declare function ps:get-post-batch-status(
   $job-id as xs:string (: the UUID for the job :)
   ) as xs:string (: post-batch status :)
 {
-  let $job-status-doc := ps:get-job-status-doc($job-id)
-  return $job-status-doc/ps:jobStatus/ps:postBatchModule/ps:status/fn:string()
+  ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:postBatchModule/ps:moduleStatus/fn:string()
 };
 
-(:
-declare function ps:get-status-for-all-documents(
+(: return the failed URIs :)
+declare function ps:get-failed-uris(
   $job-id as xs:string (: the UUID for the job :)
-  ) as element()*
+  ) as xs:string (: post-batch status :)
 {
-  let $job-status-doc := ps:get-job-status-doc($job-id)
+  for $chunk-id in ps:get-job-status-doc($job-id)
+  /ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk
+  [ps:chunkStatus/fn:string() = ($chunk-status-complete-with-errors, $chunk-status-unsuccessful)]/ps:chunkId/fn:string()
+    return ps:get-chunk-status-doc($chunk-id)
+    /ps:chunk/ps:documents/ps:document[ps:documentStatus/fn:string() = ($chunk-status-complete-with-errors, $chunk-status-unsuccessful)]/ps:documentId/fn:string()
 };
-:)
+
+declare function ps:get-job-chunk-ids(
+  $job-id as xs:string (: the UUID for the job :)
+  ) as xs:string* (: chunk ID(s) :)
+{
+  ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk/ps:chunkId/fn:string()
+};

@@ -1,12 +1,21 @@
 xquery version "1.0-ml";
 
 module namespace tu="http://marklogic.com/pink-slipper/test-util";
+
 import module namespace test="http://marklogic.com/roxy/test-helper" at "/test/test-helper.xqy";
 import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
+
+declare namespace t="http://marklogic.com/roxy/test";
 
 declare option xdmp:mapping "false";
 
 declare variable $default-wait-time := 1;
+declare variable $eval-options :=
+  <options xmlns="xdmp:eval">
+    <isolation>different-transaction</isolation>
+    <transaction-mode>query</transaction-mode>
+  </options>
+;
 
 (: return the job status from the pink-slipper module (abstract away the hassle of doing things in another transaction) :)
 declare function tu:get-job-status(
@@ -23,9 +32,7 @@ declare function tu:get-job-status(
   (
     xs:QName("ps:job-id"), $job-id
   ),
-  <options xmlns="xdmp:eval">
-    <isolation>different-transaction</isolation>
-  </options>
+  $eval-options
   )
 };
 
@@ -44,9 +51,7 @@ declare function tu:get-thread-statuses(
   (
     xs:QName("ps:job-id"), $job-id
   ),
-  <options xmlns="xdmp:eval">
-    <isolation>different-transaction</isolation>
-  </options>
+  $eval-options
   )
 };
 
@@ -65,9 +70,7 @@ declare function tu:get-thread-status-docs-for-job(
   (
     xs:QName("ps:job-id"), $job-id
   ),
-  <options xmlns="xdmp:eval">
-    <isolation>different-transaction</isolation>
-  </options>
+  $eval-options
   )
 };
 
@@ -86,9 +89,7 @@ declare function tu:get-post-batch-status(
   (
     xs:QName("ps:job-id"), $job-id
   ),
-  <options xmlns="xdmp:eval">
-    <isolation>different-transaction</isolation>
-  </options>
+  $eval-options
   )
 };
 
@@ -106,51 +107,42 @@ declare function tu:doc(
   (
     xs:QName("local:uri"), $uri
   ),
-  <options xmlns="xdmp:eval">
-    <isolation>different-transaction</isolation>
-  </options>
+  $eval-options
   )
+};
+
+declare function tu:assert-dateTime-exists(
+  $date-time as text() (: should be a text node that is castable as a dateTime :)
+) as element(t:result)*
+{
+  test:assert-exists($date-time),
+  test:assert-true($date-time castable as xs:dateTime)
 };
 
 (: return the empty sequence after the job with the specified ID is completed :)
 declare function tu:wait-for-job-to-complete(
   $job-id as xs:string, (: the job ID :)
   $wait-time as xs:unsignedInt? (: the number of seconds to wait between checks :)
-) as empty-sequence()
+) (: returns empty sequence, but leave off to allow for tail-recursion :)
 {
   let $wait-time := ($wait-time, $default-wait-time)[1]
-  return xdmp:eval(
+  let $job-status := xdmp:eval(
   '
     xquery version "1.0-ml";
-    import module namespace tu="http://marklogic.com/pink-slipper/test-util" at "/test/suites/pink-slipper/lib/test-util.xqy";
-    declare namespace ps = "http://marklogic.com/pink-slipper";
+    import module namespace ps ="http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
     declare variable $ps:job-id as xs:string external;
-    declare variable $tu:wait-time as xs:unsignedInt? external;
-    tu:_wait-for-job-to-complete($ps:job-id, $tu:wait-time)
+    ps:get-job-status($ps:job-id)
   ',
   (
-    xs:QName("ps:job-id"), $job-id,
-    xs:QName("tu:wait-time"), $wait-time
+    xs:QName("ps:job-id"), $job-id
   ),
-  <options xmlns="xdmp:eval">
-    <isolation>different-transaction</isolation>
-  </options>
+  $eval-options
   )
-};
-
-(: return the empty sequence after the job with the specified ID is completed :)
-(: although not private, this function should not be called directly, use the
-   "public" version to call this in a different transaction :)
-declare function tu:_wait-for-job-to-complete(
-  $job-id as xs:string, (: the job ID :)
-  $wait-time as xs:unsignedInt (: the number of seconds to wait between checks :)
-) as empty-sequence()
-{
-  let $status := ps:get-job-status($job-id) 
-  let $_ := if (fn:not($status = $ps:status-successful or $status = $ps:status-unsuccessful))
-  then
-    let $_ := xdmp:sleep(1000 * $wait-time)
-    return tu:wait-for-job-to-complete($job-id, $wait-time)
-  else ()
-  return ()
+  return if ($job-status ne $ps:job-status-processing)
+  then ()
+  else (
+    xdmp:sleep(1000 * $wait-time),
+    (:xdmp:log("waiting for job to finish"),:)
+    tu:wait-for-job-to-complete($job-id, $wait-time)
+  )
 };

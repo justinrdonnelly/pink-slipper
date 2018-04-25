@@ -18,17 +18,20 @@ limitations under the License.
 xquery version "1.0-ml";
 
 import module namespace test = "http://marklogic.com/roxy/test-helper" at "/test/test-helper.xqy";
+import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
 
 declare option xdmp:mapping "false";
 
 declare variable $test-name := "incomplete";
 declare variable $job-id := "f44ba6c8-01bb-4831-bf8c-7609b3f13bad";
+declare variable $chunk-ids := (
+  "a76ae3f8-8226-497f-ba9c-46fb35476262",
+  "a76ae3f8-8226-497f-ba9c-46fb35476263"
+);
 
-test:load-test-file($test-name || "/job-status.xml", xdmp:database(), "http://marklogic.com/pink-slipper/" || $job-id || ".xml"),
-for $count in (1 to 10)
-  let $thread-id := "02b415c5-9f6a-4e90-8ef5-743d606ea0" || fn:format-number($count, "00") (: pad to 2 digits :)
-  let $uri := "http://marklogic.com/pink-slipper/" || $thread-id || ".xml"
-  return test:load-test-file($test-name || "/thread-status-" || $thread-id || ".xml", xdmp:database(), $uri)
+test:load-test-file($test-name || "/job-status.xml", xdmp:database(), ps:get-job-status-doc-uri($job-id)),
+for $chunk-id in $chunk-ids
+  return test:load-test-file($test-name || "/chunk-status-" || $chunk-id || ".xml", xdmp:database(), ps:get-chunk-status-doc-uri($chunk-id))
 ;
 
 xquery version "1.0-ml";
@@ -39,12 +42,12 @@ import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pi
 declare option xdmp:mapping "false";
 
 declare variable $job-id := "f44ba6c8-01bb-4831-bf8c-7609b3f13bad";
-declare variable $complete-doc-count := 50;
-declare variable $total-doc-count := 100;
+declare variable $chunk-ids := (
+  "a76ae3f8-8226-497f-ba9c-46fb35476262",
+  "a76ae3f8-8226-497f-ba9c-46fb35476263"
+);
 
-test:assert-equal($total-doc-count, ps:get-total-document-count($job-id)),
-test:assert-equal($complete-doc-count, ps:get-processed-document-count($job-id)),
-test:assert-equal(
-  $ps:status-incomplete || " - " || $complete-doc-count || "/" || $total-doc-count,
-  ps:get-job-status($job-id)
-)
+test:assert-equal($ps:job-status-processing, ps:get-job-status($job-id)),
+test:assert-equal($ps:module-status-processing, ps:get-process-status($job-id)),
+test:assert-equal($ps:chunk-status-successful, ps:get-chunk-status($chunk-ids[1])),
+test:assert-equal($ps:chunk-status-queued, ps:get-chunk-status($chunk-ids[2]))
