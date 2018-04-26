@@ -426,16 +426,6 @@ declare function ps:create-variable-element(
   </ps:variable>
 };
 
-declare function ps:create-variable-map(
-  $variables as element(ps:moduleVariables)
-) as map:map
-{
-  let $process-module-variables := map:map()
-  let $_ := for $variable in $variables/ps:variable return
-    map:put($process-module-variables, $variable/ps:name/fn:string(), $variable/ps:value/fn:string())
-  return $process-module-variables
-};
-
 (: TODO: must take $batch-size as a param :)
 (: process BATCH-SIZE documents :)
 declare function ps:process-document(
@@ -447,7 +437,7 @@ declare function ps:process-document(
   $document-ids as xs:string*, (: document IDs (often URIs) of documents that this thread will process (BATCH-SIZE at a time) :)
   $successful as map:map, (: map of successful document IDs :)
   $failed as map:map (: map of failed document IDs to errors :)
-  ) as empty-sequence()
+) as empty-sequence()
 {
   let $_ := xdmp:trace($trace-event-name, "Entering ps:process-document")
   let $f := function() {
@@ -611,7 +601,7 @@ declare function ps:create-initial-chunk-status-document(
   $job-id as xs:string, (: the UUID for the job :)
   $chunk-id as xs:string, (: the UUID for the chunk :)
   $document-ids as xs:string* (: document IDs (often a URI) of documents that were processed successfully :)
-  ) as empty-sequence()
+) as empty-sequence()
 {
   let $_ := xdmp:trace($trace-event-name, "Entering ps:create-initial-chunk-status-document")
   let $uri := ps:get-chunk-status-doc-uri($chunk-id)
@@ -668,7 +658,7 @@ declare function ps:populate-task-queue(
 declare function ps:add-uri-to-vars(
   $vars as map:map?, (: variables :)
   $uri as xs:string (: the URI to add to $vars :)
-  ) as map:map (: return the modifed $vars :)
+) as map:map (: return the modifed $vars :)
 {
   (: create a new map because otherwise we modify the map used by multiple threads :)
   let $return-vars := map:new($vars)
@@ -677,7 +667,9 @@ declare function ps:add-uri-to-vars(
 };
 
 (: return the index in the sequence of the first item of type xs:integer :)
-declare function ps:get-count-index($seq)
+declare function ps:get-count-index(
+  $seq as item()* (: sequence containing only 1 integer :)
+)
 {
   let $item-location := for $i at $pos in $seq
     return if ($i instance of xs:integer) then $pos else ()
@@ -686,7 +678,7 @@ declare function ps:get-count-index($seq)
 
 declare function ps:get-job-status-doc-uri(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string
+) as xs:string
 {
   $base-uri || $job-id || ".xml"
 };
@@ -713,7 +705,7 @@ declare function ps:get-job-status-doc(
 
 declare function ps:get-chunk-status-doc-uri(
   $chunk-id as xs:string (: the UUID for the thread :)
-  ) as xs:string (: URI for the chunk status document :)
+) as xs:string (: URI for the chunk status document :)
 {
   $base-uri || $chunk-id || ".xml"
 };
@@ -721,7 +713,7 @@ declare function ps:get-chunk-status-doc-uri(
 (: return the chunk status document :)
 declare function ps:get-chunk-status-doc(
   $chunk-id as xs:string (: the UUID for the chunk :)
-  ) as document-node()* (: chunk status document for the chunk ID :)
+) as document-node()* (: chunk status document for the chunk ID :)
 {
   ps:get-chunk-status-doc($chunk-id, fn:false())
 };
@@ -730,7 +722,7 @@ declare function ps:get-chunk-status-doc(
 declare function ps:get-chunk-status-doc(
   $chunk-id as xs:string, (: the UUID for the chunk :)
   $lock as xs:boolean? (: whether to lock for update :)
-  ) as document-node()* (: chunk status document for the chunk ID :)
+) as document-node()* (: chunk status document for the chunk ID :)
 {
   if ($lock)
   then xdmp:lock-for-update(ps:get-chunk-status-doc-uri($chunk-id))
@@ -740,7 +732,7 @@ declare function ps:get-chunk-status-doc(
 
 declare function ps:get-chunk-status(
   $chunk-id as xs:string (: the UUID for the chunk :)
-  ) as xs:string (: chunk status for the chunk ID :)
+) as xs:string (: chunk status for the chunk ID :)
 {
   fn:doc(ps:get-chunk-status-doc-uri($chunk-id))/ps:chunk/ps:chunkStatus/fn:string()
 };
@@ -751,7 +743,7 @@ declare function ps:get-chunk-status(
 (: return the overall status of a job :)
 declare function ps:get-job-status(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string (: job status :)
+) as xs:string (: job status :)
 {
   ps:get-job-status-doc($job-id)/ps:job/ps:jobStatus/fn:string()
 };
@@ -759,7 +751,7 @@ declare function ps:get-job-status(
 (: return the status of the init-module :)
 declare function ps:get-init-status(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string (: init status :)
+) as xs:string (: init status :)
 {
   ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:initModule/ps:moduleStatus/fn:string()
 };
@@ -767,7 +759,7 @@ declare function ps:get-init-status(
 (: return the status of the uris-module :)
 declare function ps:get-uris-status(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string (: uris status :)
+) as xs:string (: uris status :)
 {
   ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:urisModule/ps:moduleStatus/fn:string()
 };
@@ -775,7 +767,7 @@ declare function ps:get-uris-status(
 (: return the status of the pre-batch-module :)
 declare function ps:get-pre-batch-status(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string (: pre-batch status :)
+) as xs:string (: pre-batch status :)
 {
   ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:preBatchModule/ps:moduleStatus/fn:string()
 };
@@ -783,7 +775,7 @@ declare function ps:get-pre-batch-status(
 (: return the status of the process-module :)
 declare function ps:get-process-status(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string (: process status :)
+) as xs:string (: process status :)
 {
   ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:processModule/ps:moduleStatus/fn:string()
 };
@@ -791,7 +783,7 @@ declare function ps:get-process-status(
 (: return the status of the post-batch-module :)
 declare function ps:get-post-batch-status(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string (: post-batch status :)
+) as xs:string (: post-batch status :)
 {
   ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:postBatchModule/ps:moduleStatus/fn:string()
 };
@@ -799,7 +791,7 @@ declare function ps:get-post-batch-status(
 (: return the failed URIs :)
 declare function ps:get-failed-uris(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string (: post-batch status :)
+) as xs:string (: URIs that failed processing :)
 {
   for $chunk-id in ps:get-job-status-doc($job-id)
   /ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk
@@ -810,7 +802,7 @@ declare function ps:get-failed-uris(
 
 declare function ps:get-job-chunk-ids(
   $job-id as xs:string (: the UUID for the job :)
-  ) as xs:string* (: chunk ID(s) :)
+) as xs:string* (: chunk ID(s) :)
 {
   ps:get-job-status-doc($job-id)/ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk/ps:chunkId/fn:string()
 };
