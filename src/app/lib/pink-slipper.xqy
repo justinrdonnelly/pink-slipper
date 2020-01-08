@@ -986,7 +986,7 @@ declare function ps:get-post-batch-status(
 :)
 declare function ps:get-failed-uris(
   $job-id as xs:string
-) as xs:string
+) as xs:string*
 {
   for $chunk-id in ps:get-job-status-doc($job-id)
     /ps:job/ps:modules/ps:processModule/ps:chunks/ps:chunk
