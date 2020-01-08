@@ -870,7 +870,7 @@ declare function ps:get-chunk-status-doc-uri(
 :)
 declare function ps:get-chunk-status-doc(
   $chunk-id as xs:string
-) as document-node()*
+) as document-node()
 {
   ps:get-chunk-status-doc($chunk-id, fn:false())
 };
@@ -884,7 +884,7 @@ declare function ps:get-chunk-status-doc(
 declare function ps:get-chunk-status-doc(
   $chunk-id as xs:string,
   $lock as xs:boolean?
-) as document-node()*
+) as document-node()
 {
   if ($lock)
   then xdmp:lock-for-update(ps:get-chunk-status-doc-uri($chunk-id))
