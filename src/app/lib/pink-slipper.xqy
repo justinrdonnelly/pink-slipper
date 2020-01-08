@@ -901,7 +901,7 @@ declare function ps:get-chunk-status(
   $chunk-id as xs:string
 ) as xs:string
 {
-  fn:doc(ps:get-chunk-status-doc-uri($chunk-id))/ps:chunk/ps:chunkStatus/fn:string()
+  ps:get-chunk-status-doc($chunk-id)/ps:chunk/ps:chunkStatus/fn:string()
 };
 
 
