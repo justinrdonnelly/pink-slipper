@@ -839,6 +839,7 @@ declare function ps:get-job-status-doc(
  : @param $job-id The job ID
  : @param $lock Whether to lock the job status document for update
  : @return The job status document
+ : @error The job ID does not exist
 :)
 declare function ps:get-job-status-doc(
   $job-id as xs:string,
@@ -848,7 +849,11 @@ declare function ps:get-job-status-doc(
   if ($lock)
   then xdmp:lock-for-update(ps:get-job-status-doc-uri($job-id))
   else (),
-  fn:doc(ps:get-job-status-doc-uri($job-id))
+  let $job-status-doc := fn:doc(ps:get-job-status-doc-uri($job-id))
+  return
+    if (fn:empty($job-status-doc))
+    then fn:error(xs:QName("ERROR"), "No such job ID", $job-id)
+    else $job-status-doc
 };
 
 (:~
