@@ -10,7 +10,7 @@ The main goals of Pink Slipper are:
 
 How to use Pink Slipper:
 
-1. Copy [src/app/lib/pink-slipper.xqy](src/app/lib/pink-slipper.xqy) into your project
+1. Copy [src/main/ml-modules/root/pink-slipper.xqy](src/main/ml-modules/root/pink-slipper.xqy) into your project
 2. Write your CoRB modules
 3. Import Pink Slipper into your module
 4. Create a map containing your [CoRB options](https://github.com/marklogic-community/corb2#options) (eg URIS-MODULE)
@@ -20,7 +20,7 @@ How to use Pink Slipper:
 Code example to start job:
 ```XQuery
 xquery version "1.0-ml";
-import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
+import module namespace ps = "http://marklogic.com/pink-slipper" at "/pink-slipper.xqy";
 
 let $corb-properties := map:map()
 let $_ := map:put($corb-properties, "URIS-MODULE", "/path/to/uris/module.xqy")
@@ -31,7 +31,7 @@ let $job-id := ps:run($corb-properties)
 Code example to check job status (MAKE SURE YOU DON'T DO THIS IN THE SAME TRANSACTION)
 ```XQuery
 xquery version "1.0-ml";
-import module namespace ps = "http://marklogic.com/pink-slipper" at "/app/lib/pink-slipper.xqy";
+import module namespace ps = "http://marklogic.com/pink-slipper" at "/pink-slipper.xqy";
 
 let $job-status := ps:get-job-status($job-id)
 let $_ :=

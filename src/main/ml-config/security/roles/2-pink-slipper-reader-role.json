@@ -1,0 +1,5 @@
+{
+  "role-name" : "pink-slipper-reader",
+  "description" : "Can view documents, but not edit",
+  "role" : [ "rest-reader", "pink-slipper-nobody" ]
+}
